@@ -19,25 +19,45 @@ AI-powered Mac maintenance and optimization CLI agent that keeps your Mac runnin
 - Python 3.10+
 - OpenAI API key (for AI analysis features)
 
-### Quick Start
+### Option 1: Install with Homebrew (Recommended)
 
-1. **Clone and install:**
-   ```bash
-   cd ~/projects
-   git clone <repository-url> macmaint
-   cd macmaint
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -e .
-   ```
+```bash
+brew tap nusretmemic/macmaint
+brew install macmaint
+```
 
-2. **Initialize configuration:**
+Then initialize and run:
+```bash
+macmaint init
+macmaint scan
+```
+
+### Option 2: Install with pipx
+
+```bash
+pip3 install pipx
+pipx install git+https://github.com/nusretmemic/macmaint.git
+```
+
+### Option 3: Install from source
+
+```bash
+git clone https://github.com/nusretmemic/macmaint.git
+cd macmaint
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+```
+
+### After Installation
+
+1. **Initialize configuration:**
    ```bash
    macmaint init
    ```
    You'll be prompted for your OpenAI API key.
 
-3. **Run your first scan:**
+2. **Run your first scan:**
    ```bash
    macmaint scan
    ```
