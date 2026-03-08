@@ -5,6 +5,7 @@ from macmaint.models.issue import Issue, ActionType, FixAction
 from macmaint.utils.formatters import console, confirm, print_success, print_error, print_warning
 from macmaint.utils.safety import SafetyChecker
 from macmaint.utils.system import expand_path, safe_remove_file
+from macmaint.utils.profile import ProfileManager
 from macmaint.config import get_config
 
 
@@ -22,6 +23,7 @@ class Fixer:
         self.safety_checker = SafetyChecker(
             exclude_paths=self.config.get("modules.disk.exclude_paths", [])
         )
+        self.profile_manager = ProfileManager()
     
     def fix_issues(self, issues: List[Issue]) -> Dict[str, int]:
         """Interactively fix issues.
@@ -99,12 +101,25 @@ class Fixer:
         if action.requires_confirmation or self.config.require_confirmation:
             if not confirm(f"    Proceed?", default=False):
                 print_warning("    Skipped")
+                # Track that user chose to skip/ignore this issue
+                self.profile_manager.track_ignore(issue.id, issue.category or "unknown")
                 return False
         
         # Execute based on action type
         try:
             if action.action_type == ActionType.DELETE_FILES:
-                return self._delete_files(action)
+                success = self._delete_files(action)
+                if success:
+                    # Track successful fix
+                    self.profile_manager.track_fix(
+                        issue_type=issue.category or "unknown",
+                        issue_details={
+                            'issue_id': issue.id,
+                            'title': issue.title,
+                            'action': action.description
+                        }
+                    )
+                return success
             elif action.action_type == ActionType.MANUAL:
                 print_warning("    Manual action required - skipping automated execution")
                 return False

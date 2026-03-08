@@ -10,8 +10,10 @@ from macmaint.modules.startup import StartupModule
 from macmaint.models.issue import Issue
 from macmaint.models.metrics import SystemMetrics
 from macmaint.ai.client import AIClient
+from macmaint.ai.prompts import AIRole
 from macmaint.utils.system import get_boot_time, get_uptime_hours
 from macmaint.utils.history import HistoryManager
+from macmaint.utils.profile import ProfileManager
 
 
 class Scanner:
@@ -28,6 +30,9 @@ class Scanner:
         
         # Initialize history manager
         self.history_manager = HistoryManager(retention_days=30)
+        
+        # Initialize profile manager
+        self.profile_manager = ProfileManager()
         
         # Initialize modules
         self.modules = {}
@@ -97,8 +102,36 @@ class Scanner:
         # Use AI to enrich issues if available
         if self.ai_client:
             try:
-                ai_issues, summary = self.ai_client.analyze_system(all_metrics)
+                # Load user profile for personalized analysis
+                profile = self.profile_manager.load()
+                
+                # Determine which AI role to use based on user preference
+                role_map = {
+                    'general': AIRole.GENERAL,
+                    'performance': AIRole.PERFORMANCE,
+                    'security': AIRole.SECURITY,
+                    'storage': AIRole.STORAGE,
+                    'maintenance': AIRole.MAINTENANCE,
+                    'troubleshooter': AIRole.TROUBLESHOOTER
+                }
+                preferred_role = role_map.get(
+                    profile.preferences.preferred_ai_role,
+                    AIRole.GENERAL
+                )
+                
+                # Get AI analysis with personalized role
+                ai_issues, summary = self.ai_client.analyze_system(
+                    all_metrics,
+                    role=preferred_role
+                )
                 all_issues = self.ai_client.enrich_issues(all_issues, ai_issues)
+                
+                # Filter out issues user has chosen to ignore
+                all_issues = [
+                    issue for issue in all_issues
+                    if not self.profile_manager.is_ignored(issue.id)
+                ]
+                
             except Exception as e:
                 if self.config.verbose:
                     print(f"Warning: AI analysis failed: {e}")
@@ -108,6 +141,13 @@ class Scanner:
             self.history_manager.save_snapshot(all_metrics)
         except Exception:
             # Don't fail scan if history save fails
+            pass
+        
+        # Track scan in user profile
+        try:
+            self.profile_manager.track_scan()
+        except Exception:
+            # Don't fail scan if profile tracking fails
             pass
         
         return system_metrics, all_issues

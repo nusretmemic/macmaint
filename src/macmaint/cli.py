@@ -495,6 +495,235 @@ def trends(days):
     console.print(f"[dim]Data range: {first_date} to {last_date}[/dim]\n")
 
 
+@cli.command()
+@click.argument('question', required=True)
+def ask(question):
+    """Ask a natural language question about your Mac.
+    
+    Example: macmaint ask "Why is my Mac running slow?"
+    """
+    from macmaint.ai.client import AIClient
+    from macmaint.utils.profile import ProfileManager
+    
+    print_header("AI Assistant")
+    console.print()
+    
+    # Load config and check API key
+    config = get_config()
+    if not config.api_key:
+        print_error("No API key found. Run 'macmaint init' to configure")
+        sys.exit(1)
+    
+    # Load user profile
+    profile_manager = ProfileManager()
+    profile_summary = profile_manager.get_summary()
+    
+    # Scan current system
+    console.print("Gathering system information...")
+    scanner = Scanner(use_ai=False)
+    
+    with create_progress() as progress:
+        task = progress.add_task("Scanning...", total=100)
+        metrics, issues = scanner.scan()
+        progress.update(task, completed=100)
+    
+    console.print()
+    
+    # Get AI response
+    console.print("[cyan]Thinking...[/cyan]\n")
+    ai_client = AIClient(config.api_key)
+    
+    try:
+        response = ai_client.ask_question(question, metrics, issues, profile_summary)
+        
+        # Format and display response
+        from rich.panel import Panel
+        from rich.markdown import Markdown
+        
+        console.print(Panel(
+            Markdown(response),
+            title="[bold cyan]Answer[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
+        console.print()
+        
+    except Exception as e:
+        print_error(f"AI request failed: {str(e)}")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('issue_id', required=False)
+def explain(issue_id):
+    """Get a detailed explanation of a system issue.
+    
+    If no issue ID is provided, shows a list to select from.
+    """
+    from macmaint.ai.client import AIClient
+    from macmaint.utils.profile import ProfileManager
+    from rich.prompt import Prompt
+    
+    print_header("Issue Explanation")
+    console.print()
+    
+    # Load config and check API key
+    config = get_config()
+    if not config.api_key:
+        print_error("No API key found. Run 'macmaint init' to configure")
+        sys.exit(1)
+    
+    # Scan to get issues
+    console.print("Scanning for issues...")
+    scanner = Scanner(use_ai=False)
+    
+    with create_progress() as progress:
+        task = progress.add_task("Scanning...", total=100)
+        metrics, issues = scanner.scan()
+        progress.update(task, completed=100)
+    
+    console.print()
+    
+    if not issues:
+        print_success("No issues found!")
+        return
+    
+    # If no issue ID provided, let user select
+    if not issue_id:
+        console.print("[bold]Available Issues:[/bold]\n")
+        for idx, issue in enumerate(issues, 1):
+            severity_str = str(issue.severity).split('.')[-1].lower() if '.' in str(issue.severity) else str(issue.severity).lower()
+            if severity_str == "critical":
+                icon = "[red]●[/red]"
+            elif severity_str == "warning":
+                icon = "[yellow]●[/yellow]"
+            else:
+                icon = "[blue]●[/blue]"
+            
+            console.print(f"  {idx}. {icon} {issue.title}")
+        
+        console.print()
+        choice = Prompt.ask("Select issue number", default="1")
+        
+        try:
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(issues):
+                print_error("Invalid selection")
+                return
+            selected_issue = issues[idx]
+        except ValueError:
+            print_error("Invalid selection")
+            return
+    else:
+        # Find issue by ID
+        selected_issue = None
+        for issue in issues:
+            if issue.issue_id == issue_id:
+                selected_issue = issue
+                break
+        
+        if not selected_issue:
+            print_error(f"Issue '{issue_id}' not found")
+            return
+    
+    # Get detailed explanation from AI
+    console.print("[cyan]Analyzing issue...[/cyan]\n")
+    
+    profile_manager = ProfileManager()
+    profile_summary = profile_manager.get_summary()
+    
+    ai_client = AIClient(config.api_key)
+    
+    try:
+        explanation = ai_client.explain_issue(selected_issue, metrics, profile_summary)
+        
+        # Format and display
+        from rich.panel import Panel
+        from rich.markdown import Markdown
+        
+        console.print(Panel(
+            Markdown(explanation),
+            title=f"[bold cyan]{selected_issue.title}[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
+        console.print()
+        
+    except Exception as e:
+        print_error(f"AI request failed: {str(e)}")
+        sys.exit(1)
+
+
+@cli.command()
+def insights():
+    """Get proactive insights and maintenance recommendations.
+    
+    AI analyzes your system patterns and predicts future issues.
+    """
+    from macmaint.ai.client import AIClient
+    from macmaint.utils.profile import ProfileManager
+    from macmaint.utils.history import HistoryManager
+    
+    print_header("Proactive Insights")
+    console.print()
+    
+    # Load config and check API key
+    config = get_config()
+    if not config.api_key:
+        print_error("No API key found. Run 'macmaint init' to configure")
+        sys.exit(1)
+    
+    # Load current metrics
+    console.print("Analyzing system patterns...")
+    scanner = Scanner(use_ai=False)
+    
+    with create_progress() as progress:
+        task = progress.add_task("Scanning...", total=100)
+        metrics, issues = scanner.scan()
+        progress.update(task, completed=100)
+    
+    console.print()
+    
+    # Load historical trends
+    history_manager = HistoryManager()
+    snapshots = history_manager.get_snapshots(30)  # Last 30 days
+    
+    # Load user profile
+    profile_manager = ProfileManager()
+    profile_summary = profile_manager.get_summary()
+    
+    # Get AI insights
+    console.print("[cyan]Generating insights...[/cyan]\n")
+    ai_client = AIClient(config.api_key)
+    
+    try:
+        insights_text = ai_client.get_proactive_insights(
+            metrics, 
+            issues, 
+            snapshots, 
+            profile_summary
+        )
+        
+        # Format and display
+        from rich.panel import Panel
+        from rich.markdown import Markdown
+        
+        console.print(Panel(
+            Markdown(insights_text),
+            title="[bold cyan]AI Insights & Recommendations[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
+        console.print()
+        
+        if len(snapshots) < 7:
+            print_info(f"Tip: Run 'macmaint scan' regularly to get more accurate predictions (currently have {len(snapshots)} data points)")
+        
+    except Exception as e:
+        print_error(f"AI request failed: {str(e)}")
+        sys.exit(1)
+
+
 def _calculate_health_score(metrics) -> int:
     """Calculate overall health score (0-100)."""
     score = 100

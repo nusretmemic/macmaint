@@ -4,12 +4,30 @@ AI-powered Mac maintenance and optimization CLI agent that keeps your Mac runnin
 
 ## Features
 
-- **Disk Space Management** - Automatically identifies and cleans caches, logs, and temporary files
-- **Memory Optimization** - Monitors RAM usage and detects memory leaks
-- **CPU Monitoring** - Tracks CPU-intensive processes and system load
-- **AI-Powered Analysis** - Uses OpenAI GPT-4 to provide intelligent recommendations
+### Core Monitoring & Cleanup
+
+- **Disk Space Management** - Automatically identifies and cleans caches, logs, and temporary files with detailed breakdown by category
+- **Memory Optimization** - Monitors RAM usage, detects memory leaks, and categorizes processes by type
+- **CPU Monitoring** - Tracks CPU-intensive processes and system load over time
+- **Network Tracking** - Monitors bandwidth usage with anomaly detection
+- **Battery Health** - Battery status and health monitoring (on laptops)
+- **Startup Items** - Track launch agents and daemons
+
+### AI-Powered Intelligence (Phase 2)
+
+- **Conversational AI** - Ask questions about your Mac in natural language and get personalized answers
+- **Issue Explanations** - Get detailed, context-aware explanations of system problems with actionable solutions
+- **Proactive Insights** - AI predicts future issues and recommends optimal maintenance schedules
+- **Smart Cleanup** - AI-powered risk assessment for safe file cleanup with personalized recommendations
+- **Learning System** - Builds a profile of your usage patterns to provide increasingly relevant advice
+- **Specialized AI Roles** - Choose from different AI personalities (General, Performance, Security, Storage, Maintenance, Troubleshooter)
+
+### Safety & Privacy
+
 - **Safety First** - Built-in safety checks and confirmation prompts for all destructive actions
-- **Privacy Protected** - Anonymizes all data before sending to AI
+- **Privacy Protected** - All data is anonymized before sending to AI
+- **Smart Risk Assessment** - Cleanup recommendations with risk levels (SAFE, LOW_RISK, MEDIUM_RISK, HIGH_RISK, CRITICAL)
+- **Local Profile Storage** - Your preferences and patterns are stored locally only
 
 ## Installation
 
@@ -106,6 +124,80 @@ macmaint config                  # Show config file location
 macmaint config ui.colors true   # Enable colors
 ```
 
+#### `macmaint dashboard`
+Show an interactive dashboard with system health overview and metrics visualization.
+
+```bash
+macmaint dashboard
+```
+
+#### `macmaint analyze-disk`
+Detailed disk usage analysis with cache breakdown visualization.
+
+```bash
+macmaint analyze-disk             # Default tree view
+macmaint analyze-disk --tree      # Tree view of cache breakdown
+macmaint analyze-disk --table     # Table view of cache breakdown
+```
+
+#### `macmaint analyze-memory`
+Detailed memory usage analysis with process categorization.
+
+```bash
+macmaint analyze-memory           # Basic memory breakdown
+macmaint analyze-memory --processes  # Show processes by category
+```
+
+#### `macmaint trends`
+View historical trends for system metrics with sparkline visualizations.
+
+```bash
+macmaint trends                   # Last 7 days
+macmaint trends --days 30         # Last 30 days
+```
+
+### AI-Powered Commands (Phase 2)
+
+MacMaint now includes intelligent AI features that learn from your behavior and provide personalized recommendations.
+
+#### `macmaint ask`
+Ask natural language questions about your Mac.
+
+```bash
+macmaint ask "Why is my Mac running slow?"
+macmaint ask "How much space can I free up?"
+macmaint ask "Which apps are using the most memory?"
+```
+
+The AI will analyze your current system state and provide helpful, personalized answers based on your usage patterns.
+
+#### `macmaint explain`
+Get a detailed explanation of a specific system issue.
+
+```bash
+macmaint explain                  # Shows list of current issues to select from
+macmaint explain <issue-id>       # Explain specific issue by ID
+```
+
+The AI provides:
+- Why the issue is occurring
+- What the impact is on your system
+- Step-by-step solutions
+- Prevention tips for the future
+
+#### `macmaint insights`
+Get proactive insights and predictive recommendations.
+
+```bash
+macmaint insights
+```
+
+The AI analyzes your system patterns over time and provides:
+- Predictions of future issues (e.g., "disk will be full in 14 days")
+- Recommended maintenance schedule
+- Optimization opportunities
+- Trends in your system usage
+
 ### Example Workflow
 
 ```bash
@@ -137,6 +229,109 @@ macmaint fix
 #   Proceed? [y/N]: y
 # ✓ Cleaned 8.4 GB (1,247 files deleted)
 ```
+
+### Example AI Workflow (Phase 2)
+
+```bash
+# 1. Ask a question about your Mac
+macmaint ask "Why is my Mac running slow?"
+
+# Output:
+# ╭─ Answer ──────────────────────────────────────────╮
+# │ Based on your current system state, your Mac is   │
+# │ running slow due to:                              │
+# │                                                   │
+# │ 1. **High Memory Usage** (87% used)               │
+# │    - Chrome is using 4.2 GB                       │
+# │    - 15 background apps consuming 6.8 GB          │
+# │                                                   │
+# │ 2. **Disk Space Low** (12.3 GB free)              │
+# │    - Browser caches: 3.2 GB                       │
+# │    - System caches: 2.1 GB                        │
+# │                                                   │
+# │ **Recommendations:**                              │
+# │ - Close unused Chrome tabs or restart Chrome      │
+# │ - Run `macmaint fix` to clean caches              │
+# │ - Consider upgrading storage if this happens oft  │
+# ╰───────────────────────────────────────────────────╯
+
+# 2. Get detailed explanation of a specific issue
+macmaint explain
+
+# Output: (shows list of issues to select from)
+# Available Issues:
+#   1. 🔴 High memory usage: Chrome (4.2 GB)
+#   2. 🟡 Cache files consuming 8.4 GB
+# Select issue number [1]: 1
+
+# ╭─ High memory usage: Chrome (4.2 GB) ─────────────╮
+# │ ## What's Happening                               │
+# │ Chrome is consuming 4.2 GB of RAM...              │
+# │                                                   │
+# │ ## Why It Matters                                 │
+# │ High memory usage can slow down your entire...    │
+# │                                                   │
+# │ ## How to Fix                                     │
+# │ 1. Close unnecessary tabs...                      │
+# │ 2. Disable unused extensions...                   │
+# ╰───────────────────────────────────────────────────╯
+
+# 3. Get proactive insights
+macmaint insights
+
+# Output:
+# ╭─ AI Insights & Recommendations ───────────────────╮
+# │ ## Predictions                                    │
+# │ - **Disk Full Warning:** At current usage rate,   │
+# │   your disk will be full in ~14 days              │
+# │                                                   │
+# │ ## Maintenance Schedule                           │
+# │ Based on your patterns, I recommend:              │
+# │ - Weekly cache cleanup (you typically clean       │
+# │   every 12 days)                                  │
+# │ - Monthly memory optimization                     │
+# │                                                   │
+# │ ## Optimization Opportunities                     │
+# │ - You frequently ignore "large downloads" issues  │
+# │   Consider moving old downloads to external drive │
+# ╰───────────────────────────────────────────────────╯
+```
+
+## User Profile & Learning
+
+MacMaint builds a profile of your usage patterns to provide increasingly personalized recommendations. The profile is stored locally in `~/.macmaint/profile.json` and includes:
+
+- **Preferences**: Risk tolerance, preferred AI role, notification level
+- **Usage Patterns**: Most common issues, cleanup frequency, fix history
+- **Learning Data**: Which issues you tend to fix vs. ignore, recurring problems
+
+### Profile Customization
+
+The AI automatically learns from your actions, but you can also customize preferences:
+
+```yaml
+# In ~/.macmaint/profile.json (automatically created)
+{
+  "preferences": {
+    "risk_tolerance": "conservative",        # conservative, moderate, aggressive
+    "preferred_ai_role": "general",          # general, performance, security, storage, maintenance, troubleshooter
+    "auto_fix_safe_issues": false,
+    "show_technical_details": false,
+    "notification_level": "important"        # all, important, critical
+  }
+}
+```
+
+### AI Roles
+
+MacMaint offers different AI personalities to match your needs:
+
+- **General**: Balanced advice for everyday Mac users (default)
+- **Performance**: Focused on speed and optimization
+- **Security**: Privacy and security-focused recommendations
+- **Storage**: Disk space management specialist
+- **Maintenance**: Preventive care and system health
+- **Troubleshooter**: Problem-solving and issue resolution
 
 ## Configuration
 
