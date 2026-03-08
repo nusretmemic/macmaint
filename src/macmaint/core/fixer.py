@@ -85,6 +85,16 @@ class Fixer:
         if action.estimated_impact:
             console.print(f"    [dim]Impact: {action.estimated_impact}[/dim]")
         
+        # Special warning for cache cleanup
+        if action.action_type == ActionType.DELETE_FILES and "cache" in issue.id.lower():
+            console.print("\n    [bold yellow]⚠️  IMPORTANT: Cache Cleanup Warning[/bold yellow]")
+            console.print("    [yellow]Cleaning browser caches will:[/yellow]")
+            console.print("    [yellow]  • Log you out of websites[/yellow]")
+            console.print("    [yellow]  • Require re-entering passwords and credentials[/yellow]")
+            console.print("    [yellow]  • Remove saved form data and preferences[/yellow]")
+            console.print("    [yellow]  • Clear website session data[/yellow]")
+            console.print()
+        
         # Check if confirmation required
         if action.requires_confirmation or self.config.require_confirmation:
             if not confirm(f"    Proceed?", default=False):

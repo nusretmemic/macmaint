@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="macmaint",
-    version="0.1.0",
+    version="0.2.0",
     author="Nusret Memic",
     description="AI-powered Mac maintenance and optimization CLI agent",
     long_description=long_description,

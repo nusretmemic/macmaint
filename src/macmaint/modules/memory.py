@@ -1,10 +1,12 @@
 """Memory monitoring module."""
-from typing import Dict, List
+from typing import Dict, List, Optional
 import psutil
+import subprocess
+import re
 
 from macmaint.modules.base import BaseModule
 from macmaint.models.issue import Issue, IssueSeverity, IssueCategory, FixAction, ActionType
-from macmaint.models.metrics import MemoryMetrics, ProcessInfo
+from macmaint.models.metrics import MemoryMetrics, ProcessInfo, MemoryBreakdown, MemoryPressure
 from macmaint.utils.system import bytes_to_gb
 
 
@@ -25,11 +27,16 @@ class MemoryModule(BaseModule):
             swap_used_gb=bytes_to_gb(swap.used)
         )
         
+        # Get memory breakdown (macOS specific)
+        breakdown = self._get_memory_breakdown()
+        if breakdown:
+            metrics.breakdown = breakdown
+        
         # Get top memory-consuming processes
         processes = []
         min_memory_mb = self.config.get("min_process_memory_mb", 100)
         
-        for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'memory_percent', 'status']):
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'memory_percent', 'status', 'exe']):
             try:
                 mem_info = proc.info.get('memory_info')
                 if not mem_info:
@@ -38,12 +45,16 @@ class MemoryModule(BaseModule):
                 mem_mb = mem_info.rss / (1024 * 1024)
                 
                 if mem_mb >= min_memory_mb:
+                    # Categorize process
+                    category = self._categorize_process(proc.info.get('name', ''), proc.info.get('exe', ''))
+                    
                     processes.append(ProcessInfo(
                         pid=proc.info['pid'],
                         name=proc.info['name'],
                         memory_mb=mem_mb,
                         memory_percent=proc.info.get('memory_percent', 0.0),
-                        status=proc.info.get('status', 'unknown')
+                        status=proc.info.get('status', 'unknown'),
+                        category=category
                     ))
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
@@ -52,7 +63,96 @@ class MemoryModule(BaseModule):
         processes.sort(key=lambda p: p.memory_mb, reverse=True)
         metrics.top_processes = processes[:10]
         
+        # Group processes by category
+        metrics.processes_by_category = self._group_processes_by_category(processes)
+        
         return metrics.model_dump()
+    
+    def _get_memory_breakdown(self) -> Optional[MemoryBreakdown]:
+        """Get detailed memory breakdown using vm_stat (macOS specific)."""
+        try:
+            result = subprocess.run(['vm_stat'], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                return None
+            
+            output = result.stdout
+            
+            # Parse vm_stat output
+            # Example line: "Pages wired down:                12345."
+            def extract_pages(pattern: str) -> float:
+                match = re.search(rf'{pattern}:\s+(\d+)\.?', output)
+                if match:
+                    pages = int(match.group(1))
+                    # Page size is typically 4096 bytes on macOS
+                    bytes_value = pages * 4096
+                    return bytes_to_gb(bytes_value)
+                return 0.0
+            
+            wired = extract_pages('Pages wired down')
+            active = extract_pages('Pages active')
+            inactive = extract_pages('Pages inactive')
+            compressed = extract_pages('Pages occupied by compressor')
+            
+            # Determine memory pressure
+            mem = psutil.virtual_memory()
+            pressure = MemoryPressure.NORMAL
+            if mem.percent >= 95:
+                pressure = MemoryPressure.CRITICAL
+            elif mem.percent >= 85:
+                pressure = MemoryPressure.WARNING
+            
+            return MemoryBreakdown(
+                wired_gb=wired,
+                active_gb=active,
+                inactive_gb=inactive,
+                compressed_gb=compressed,
+                pressure_level=pressure
+            )
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, Exception):
+            return None
+    
+    def _categorize_process(self, name: str, exe_path: str) -> str:
+        """Categorize a process as system, application, or background."""
+        name_lower = name.lower()
+        exe_lower = exe_path.lower() if exe_path else ''
+        
+        # System processes
+        system_names = [
+            'kernel_task', 'launchd', 'windowserver', 'systemmigrationd',
+            'loginwindow', 'systemuiserver', 'dock', 'finder', 'spotlight',
+            'coreaudiod', 'bluetoothd', 'wirelessproxd', 'notifyd',
+            'distnoted', 'cfprefsd', 'powerd', 'syslogd', 'coreservicesd'
+        ]
+        
+        for sys_name in system_names:
+            if sys_name in name_lower:
+                return 'system'
+        
+        # Applications (in /Applications or have .app)
+        if '/applications/' in exe_lower or '.app/' in exe_lower:
+            return 'application'
+        
+        # Helper processes (typically end with 'Helper' or contain 'helper')
+        if 'helper' in name_lower or 'agent' in name_lower:
+            return 'background'
+        
+        # Default to background for anything else
+        return 'background'
+    
+    def _group_processes_by_category(self, processes: List[ProcessInfo]) -> Dict[str, List[ProcessInfo]]:
+        """Group processes by their category."""
+        grouped = {
+            'system': [],
+            'application': [],
+            'background': []
+        }
+        
+        for proc in processes:
+            category = proc.category or 'background'
+            if category in grouped:
+                grouped[category].append(proc)
+        
+        return grouped
     
     def analyze(self, metrics: Dict) -> List[Issue]:
         """Analyze memory metrics and detect issues."""

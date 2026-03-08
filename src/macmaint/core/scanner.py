@@ -4,10 +4,14 @@ from macmaint.config import get_config
 from macmaint.modules.disk import DiskModule
 from macmaint.modules.memory import MemoryModule
 from macmaint.modules.cpu import CPUModule
+from macmaint.modules.network import NetworkModule
+from macmaint.modules.battery import BatteryModule
+from macmaint.modules.startup import StartupModule
 from macmaint.models.issue import Issue
 from macmaint.models.metrics import SystemMetrics
 from macmaint.ai.client import AIClient
 from macmaint.utils.system import get_boot_time, get_uptime_hours
+from macmaint.utils.history import HistoryManager
 
 
 class Scanner:
@@ -22,6 +26,9 @@ class Scanner:
         self.config = get_config()
         self.use_ai = use_ai
         
+        # Initialize history manager
+        self.history_manager = HistoryManager(retention_days=30)
+        
         # Initialize modules
         self.modules = {}
         if self.config.is_module_enabled("disk"):
@@ -30,6 +37,12 @@ class Scanner:
             self.modules["memory"] = MemoryModule(self.config.get_module_config("memory"))
         if self.config.is_module_enabled("cpu"):
             self.modules["cpu"] = CPUModule(self.config.get_module_config("cpu"))
+        if self.config.is_module_enabled("network"):
+            self.modules["network"] = NetworkModule(self.config.get_module_config("network"))
+        if self.config.is_module_enabled("battery"):
+            self.modules["battery"] = BatteryModule(self.config.get_module_config("battery"))
+        if self.config.is_module_enabled("startup"):
+            self.modules["startup"] = StartupModule(self.config.get_module_config("startup"))
         
         # Initialize AI client if enabled
         self.ai_client = None
@@ -56,8 +69,12 @@ class Scanner:
         # Collect metrics from all modules
         for module_name, module in self.modules.items():
             metrics, issues = module.scan()
-            all_metrics[module_name] = metrics
-            all_issues.extend(issues)
+            
+            # Battery module returns None if no battery present
+            if metrics is not None:
+                all_metrics[module_name] = metrics
+                all_issues.extend(issues)
+            # For battery, if None is returned, skip it entirely
         
         # Add system-level metrics
         all_metrics["system"] = {
@@ -70,6 +87,9 @@ class Scanner:
             disk=all_metrics.get("disk"),
             memory=all_metrics.get("memory"),
             cpu=all_metrics.get("cpu"),
+            network=all_metrics.get("network"),
+            battery=all_metrics.get("battery"),
+            startup=all_metrics.get("startup"),
             boot_time=all_metrics["system"]["boot_time"],
             uptime_hours=all_metrics["system"]["uptime_hours"]
         )
@@ -82,6 +102,13 @@ class Scanner:
             except Exception as e:
                 if self.config.verbose:
                     print(f"Warning: AI analysis failed: {e}")
+        
+        # Save snapshot to history
+        try:
+            self.history_manager.save_snapshot(all_metrics)
+        except Exception:
+            # Don't fail scan if history save fails
+            pass
         
         return system_metrics, all_issues
     

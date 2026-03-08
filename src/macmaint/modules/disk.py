@@ -6,7 +6,7 @@ import psutil
 
 from macmaint.modules.base import BaseModule
 from macmaint.models.issue import Issue, IssueSeverity, IssueCategory, FixAction, ActionType
-from macmaint.models.metrics import DiskMetrics
+from macmaint.models.metrics import DiskMetrics, CacheCategory
 from macmaint.utils.system import expand_path, get_file_age_days, bytes_to_gb
 
 
@@ -29,6 +29,10 @@ class DiskModule(BaseModule):
         cache_info = self._scan_caches()
         metrics.cache_files = cache_info['counts']
         metrics.cache_size_gb = cache_info['size_gb']
+        
+        # Scan cache directories with detailed breakdown
+        cache_breakdown = self._scan_caches_detailed()
+        metrics.cache_breakdown = cache_breakdown
         
         # Scan log files
         log_info = self._scan_logs()
@@ -96,6 +100,122 @@ class DiskModule(BaseModule):
             'size_gb': bytes_to_gb(total_size),
             'total_count': total_count
         }
+    
+    def _scan_caches_detailed(self) -> Dict[str, CacheCategory]:
+        """Scan cache directories with detailed breakdown by category."""
+        home = Path.home()
+        cache_categories = {}
+        
+        # Define cache categories with their paths
+        browser_caches = {
+            'Safari': home / 'Library/Caches/com.apple.Safari',
+            'Chrome': home / 'Library/Caches/Google/Chrome',
+            'Firefox': home / 'Library/Caches/Firefox',
+            'Edge': home / 'Library/Caches/com.microsoft.Edge',
+            'Brave': home / 'Library/Caches/BraveSoftware/Brave-Browser',
+        }
+        
+        # Scan browser caches
+        for browser_name, cache_path in browser_caches.items():
+            if cache_path.exists():
+                size, count = self._calculate_dir_size(cache_path, max_depth=2)
+                if count > 0:
+                    cache_categories[f'browser_{browser_name.lower()}'] = CacheCategory(
+                        name=f'{browser_name} Browser',
+                        path=str(cache_path),
+                        size_gb=bytes_to_gb(size),
+                        file_count=count,
+                        percentage=0.0  # Will calculate later
+                    )
+        
+        # System caches (excluding browsers)
+        system_cache_path = home / 'Library/Caches'
+        if system_cache_path.exists():
+            size, count = 0, 0
+            try:
+                # Scan immediate subdirectories, excluding browser caches
+                for item in system_cache_path.iterdir():
+                    if item.is_dir():
+                        # Skip browser cache directories
+                        skip = False
+                        for browser_path in browser_caches.values():
+                            if item == browser_path or str(item).startswith(str(browser_path)):
+                                skip = True
+                                break
+                        
+                        if not skip:
+                            dir_size, dir_count = self._calculate_dir_size(item, max_depth=1)
+                            size += dir_size
+                            count += dir_count
+            except (OSError, PermissionError):
+                pass
+            
+            if count > 0:
+                cache_categories['system'] = CacheCategory(
+                    name='System Caches',
+                    path=str(system_cache_path),
+                    size_gb=bytes_to_gb(size),
+                    file_count=count,
+                    percentage=0.0
+                )
+        
+        # Application Support caches
+        app_support_path = home / 'Library/Application Support'
+        if app_support_path.exists():
+            size, count = 0, 0
+            try:
+                # Look for cache subdirectories
+                for app_dir in app_support_path.iterdir():
+                    if app_dir.is_dir():
+                        for item in app_dir.iterdir():
+                            if item.is_dir() and 'cache' in item.name.lower():
+                                dir_size, dir_count = self._calculate_dir_size(item, max_depth=1)
+                                size += dir_size
+                                count += dir_count
+            except (OSError, PermissionError):
+                pass
+            
+            if count > 0:
+                cache_categories['app_support'] = CacheCategory(
+                    name='App Support Caches',
+                    path=str(app_support_path),
+                    size_gb=bytes_to_gb(size),
+                    file_count=count,
+                    percentage=0.0
+                )
+        
+        # Calculate percentages
+        total_size = sum(cat.size_gb for cat in cache_categories.values())
+        if total_size > 0:
+            for category in cache_categories.values():
+                category.percentage = (category.size_gb / total_size) * 100
+        
+        return cache_categories
+    
+    def _calculate_dir_size(self, path: Path, max_depth: int = 2, current_depth: int = 0) -> tuple:
+        """Calculate total size and file count for a directory with depth limit."""
+        total_size = 0
+        total_count = 0
+        
+        if current_depth >= max_depth:
+            return total_size, total_count
+        
+        try:
+            for item in path.iterdir():
+                try:
+                    if item.is_file():
+                        total_size += item.stat().st_size
+                        total_count += 1
+                    elif item.is_dir():
+                        dir_size, dir_count = self._calculate_dir_size(item, max_depth, current_depth + 1)
+                        total_size += dir_size
+                        total_count += dir_count
+                except (OSError, PermissionError):
+                    pass
+        except (OSError, PermissionError):
+            pass
+        
+        return total_size, total_count
     
     def _scan_logs(self) -> Dict:
         """Scan log directories (optimized)."""
