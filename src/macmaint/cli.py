@@ -347,6 +347,7 @@ def analyze_disk(tree, table):
     if disk_metrics.large_files:
         console.print("\n[bold cyan]Large Files in Downloads[/bold cyan]")
         from rich.table import Table
+        from rich import box
         
         large_files_table = Table(box=box.SIMPLE, show_header=True)
         large_files_table.add_column("File", style="cyan")
