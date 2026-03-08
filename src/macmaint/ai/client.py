@@ -76,12 +76,14 @@ class AIClient:
             # Return empty results on error, don't crash
             return [], f"AI analysis failed: {str(e)}"
     
-    def ask_question(self, question: str, metrics: Dict) -> str:
+    def ask_question(self, question: str, metrics: Dict, issues: List = None, profile_summary: Dict = None) -> str:
         """Answer a natural language question about the system.
         
         Args:
             question: User's question
             metrics: Current system metrics
+            issues: List of current issues (optional)
+            profile_summary: User profile summary (optional)
         
         Returns:
             AI response string
@@ -90,7 +92,7 @@ class AIClient:
         if self.anonymize and self.anonymizer:
             metrics = self.anonymizer.anonymize_metrics(metrics)
         
-        prompt = create_conversational_prompt(question, metrics)
+        prompt = create_conversational_prompt(question, metrics, issues, profile_summary)
         system_prompt = get_role_system_prompt(AIRole.GENERAL)
         
         try:
@@ -109,12 +111,13 @@ class AIClient:
         except Exception as e:
             return f"Sorry, I couldn't process your question: {str(e)}"
     
-    def explain_issue(self, issue: Issue, metrics: Dict) -> str:
+    def explain_issue(self, issue: Issue, metrics: Dict, profile_summary: Dict = None) -> str:
         """Provide detailed explanation of a specific issue.
         
         Args:
             issue: Issue to explain
             metrics: Current system metrics
+            profile_summary: User profile summary (optional)
         
         Returns:
             Detailed explanation string
@@ -132,7 +135,7 @@ class AIClient:
             "metrics": issue.metrics
         }
         
-        prompt = create_explain_prompt(issue_dict, metrics)
+        prompt = create_explain_prompt(issue_dict, metrics, profile_summary)
         system_prompt = get_role_system_prompt(AIRole.TROUBLESHOOTER)
         
         try:
@@ -185,22 +188,23 @@ class AIClient:
                 "summary": {"error": str(e)}
             }
     
-    def get_proactive_insights(self, metrics: Dict, trends: Dict, user_profile: Dict) -> Dict:
+    def get_proactive_insights(self, metrics: Dict, issues: List, snapshots: List, profile_summary: Dict) -> str:
         """Get proactive insights and predictions.
         
         Args:
             metrics: Current system metrics
-            trends: Historical trends
-            user_profile: User preferences and patterns
+            issues: Current issues list
+            snapshots: Historical snapshots
+            profile_summary: User preferences and patterns
         
         Returns:
-            Insights and predictions
+            Insights and predictions as markdown string
         """
         # Anonymize metrics if enabled
         if self.anonymize and self.anonymizer:
             metrics = self.anonymizer.anonymize_metrics(metrics)
         
-        prompt = create_proactive_prompt(metrics, trends, user_profile)
+        prompt = create_proactive_prompt(metrics, issues, snapshots, profile_summary)
         system_prompt = get_role_system_prompt(AIRole.MAINTENANCE)
         
         try:
@@ -211,20 +215,13 @@ class AIClient:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.4,
-                max_tokens=2000,
-                response_format={"type": "json_object"}
+                max_tokens=2000
             )
             
-            content = response.choices[0].message.content
-            return json.loads(content)
+            return response.choices[0].message.content
             
         except Exception as e:
-            return {
-                "predictions": [],
-                "maintenance_schedule": {},
-                "optimization_opportunities": [],
-                "summary": f"Analysis failed: {str(e)}"
-            }
+            return f"Sorry, I couldn't generate insights: {str(e)}"
     
     def enrich_issues(self, existing_issues: List[Issue], ai_issues: List[Dict]) -> List[Issue]:
         """Enrich existing issues with AI recommendations.

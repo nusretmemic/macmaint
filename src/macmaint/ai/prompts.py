@@ -215,30 +215,46 @@ def create_analysis_prompt(metrics: dict) -> str:
     return SYSTEM_ANALYSIS_PROMPT.format(metrics=metrics_json)
 
 
-def create_conversational_prompt(question: str, metrics: dict) -> str:
+def create_conversational_prompt(question: str, metrics: dict, issues: list = None, profile_summary: dict = None) -> str:
     """Create a conversational prompt for user questions.
     
     Args:
         question: User's question
         metrics: Current system metrics
+        issues: List of current issues (optional)
+        profile_summary: User profile summary (optional)
     
     Returns:
         Formatted prompt string
     """
     import json
     metrics_json = json.dumps(metrics, indent=2)
+    
+    # Build enhanced context with issues and profile if available
+    context_parts = [f"System Metrics:\n{metrics_json}"]
+    
+    if issues:
+        issues_summary = [{"title": getattr(i, 'title', str(i)), "severity": str(getattr(i, 'severity', 'unknown'))} for i in issues[:5]]
+        context_parts.append(f"\nCurrent Issues:\n{json.dumps(issues_summary, indent=2)}")
+    
+    if profile_summary:
+        context_parts.append(f"\nUser Profile:\n{json.dumps(profile_summary, indent=2)}")
+    
+    full_context = "\n".join(context_parts)
+    
     return CONVERSATIONAL_PROMPT.format(
         question=question,
-        metrics=metrics_json
+        metrics=full_context
     )
 
 
-def create_explain_prompt(issue: Dict, metrics: dict) -> str:
+def create_explain_prompt(issue: Dict, metrics: dict, profile_summary: dict = None) -> str:
     """Create an explanation prompt for a specific issue.
     
     Args:
         issue: Issue details
         metrics: Current system metrics
+        profile_summary: User profile summary (optional)
     
     Returns:
         Formatted prompt string
@@ -246,9 +262,15 @@ def create_explain_prompt(issue: Dict, metrics: dict) -> str:
     import json
     issue_json = json.dumps(issue, indent=2)
     metrics_json = json.dumps(metrics, indent=2)
+    
+    # Add profile context if available
+    context = f"Issue:\n{issue_json}\n\nSystem Metrics:\n{metrics_json}"
+    if profile_summary:
+        context += f"\n\nUser Profile:\n{json.dumps(profile_summary, indent=2)}"
+    
     return EXPLAIN_ISSUE_PROMPT.format(
         issue=issue_json,
-        metrics=metrics_json
+        metrics=context
     )
 
 
@@ -271,24 +293,38 @@ def create_cleanup_prompt(items: list, user_profile: dict) -> str:
     )
 
 
-def create_proactive_prompt(metrics: dict, trends: dict, user_profile: dict) -> str:
+def create_proactive_prompt(metrics: dict, issues: list, snapshots: list, profile_summary: dict) -> str:
     """Create a proactive insights prompt.
     
     Args:
         metrics: Current system metrics
-        trends: Historical trend data
-        user_profile: User preferences and patterns
+        issues: Current issues list
+        snapshots: Historical snapshots
+        profile_summary: User preferences and patterns
     
     Returns:
         Formatted prompt string
     """
     import json
     metrics_json = json.dumps(metrics, indent=2)
-    trends_json = json.dumps(trends, indent=2)
-    profile_json = json.dumps(user_profile, indent=2)
+    
+    # Convert issues to simple format
+    issues_summary = []
+    for issue in issues:
+        issues_summary.append({
+            "title": getattr(issue, 'title', str(issue)),
+            "severity": str(getattr(issue, 'severity', 'unknown'))
+        })
+    issues_json = json.dumps(issues_summary, indent=2)
+    
+    # Format snapshots as trends
+    snapshots_json = json.dumps(snapshots, indent=2, default=str)
+    
+    profile_json = json.dumps(profile_summary, indent=2)
+    
     return PROACTIVE_INSIGHTS_PROMPT.format(
         metrics=metrics_json,
-        trends=trends_json,
+        trends=f"Issues:\n{issues_json}\n\nHistorical Data:\n{snapshots_json}",
         user_profile=profile_json
     )
 
