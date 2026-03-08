@@ -32,11 +32,22 @@ class CPUModule(BaseModule):
         processes = []
         min_cpu_percent = self.config.get("min_process_cpu_percent", 10)
         
-        # Sample processes briefly
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info', 'status']):
+        # First pass: initialize CPU percent for all processes (non-blocking)
+        all_procs = list(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info', 'status']))
+        for proc in all_procs:
             try:
-                # Get CPU percent (requires a brief wait)
-                cpu = proc.cpu_percent(interval=0.1)
+                proc.cpu_percent(interval=None)  # Non-blocking initialization
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        # Brief wait for CPU measurement
+        time.sleep(0.1)
+        
+        # Second pass: collect CPU data (now available)
+        for proc in all_procs:
+            try:
+                # Get CPU percent (non-blocking now)
+                cpu = proc.cpu_percent(interval=None)
                 
                 if cpu >= min_cpu_percent:
                     mem_info = proc.info.get('memory_info')
