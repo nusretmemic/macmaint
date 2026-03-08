@@ -331,8 +331,17 @@ def analyze_disk(tree, table):
     from macmaint.models.metrics import DiskMetrics
     disk_metrics = DiskMetrics(**metrics)
     
-    console.print(f"[bold]Disk Usage:[/bold] {disk_metrics.used_gb:.1f} GB / {disk_metrics.total_gb:.1f} GB ({disk_metrics.percent_used:.1f}%)")
-    console.print(f"[bold]Free Space:[/bold] {disk_metrics.free_gb:.1f} GB\n")
+    console.print(f"[bold]Total Capacity:[/bold] {disk_metrics.total_gb:.1f} GB")
+    console.print(f"[bold]Used:[/bold] {disk_metrics.used_gb:.1f} GB ({disk_metrics.percent_used:.1f}%)")
+    console.print(f"[bold]Available:[/bold] {disk_metrics.free_gb:.1f} GB")
+    
+    # Calculate and show purgeable/other space if there's a discrepancy
+    accounted = disk_metrics.used_gb + disk_metrics.free_gb
+    if disk_metrics.total_gb - accounted > 1.0:  # More than 1GB difference
+        other_space = disk_metrics.total_gb - accounted
+        console.print(f"[bold]System/Purgeable:[/bold] {other_space:.1f} GB [dim](snapshots, purgeable files)[/dim]")
+    
+    console.print()
     
     # Show cache breakdown
     if disk_metrics.cache_breakdown:
