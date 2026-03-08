@@ -534,7 +534,7 @@ def ask(question):
     ai_client = AIClient(config.api_key)
     
     try:
-        response = ai_client.ask_question(question, metrics, issues, profile_summary)
+        response = ai_client.ask_question(question, metrics.to_dict(), issues, profile_summary)
         
         # Format and display response
         from rich.panel import Panel
@@ -635,7 +635,7 @@ def explain(issue_id):
     ai_client = AIClient(config.api_key)
     
     try:
-        explanation = ai_client.explain_issue(selected_issue, metrics, profile_summary)
+        explanation = ai_client.explain_issue(selected_issue, metrics.to_dict(), profile_summary)
         
         # Format and display
         from rich.panel import Panel
@@ -698,7 +698,7 @@ def insights():
     
     try:
         insights_text = ai_client.get_proactive_insights(
-            metrics, 
+            metrics.to_dict(), 
             issues, 
             snapshots, 
             profile_summary
