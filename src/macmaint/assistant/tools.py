@@ -628,6 +628,17 @@ class ToolExecutor:
         # Track cleanup in profile
         self.profile_manager.track_cleanup()
 
+        # Invalidate the scan cache so the next disk check reflects the cleanup.
+        # Without this, _get_disk_analysis / scan_system would return pre-cleanup
+        # sizes for up to 5 minutes (in-memory TTL) or 30 minutes (disk cache TTL).
+        self._last_scan_results = None
+        self._last_scan_time = None
+        try:
+            if self._scan_cache_path.exists():
+                self._scan_cache_path.unlink()
+        except (OSError, PermissionError):
+            pass
+
         return {
             'data': {
                 'categories_cleaned': cleaned,
