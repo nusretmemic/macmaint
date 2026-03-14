@@ -370,6 +370,70 @@ class SessionManager:
             except Exception:
                 # Skip files we can't delete
                 continue
+
+        return deleted
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a specific session by ID.
+
+        Args:
+            session_id: The session ID to delete.
+
+        Returns:
+            True if the file was deleted, False if it did not exist.
+
+        Raises:
+            ValueError: If session_id matches the currently active session.
+        """
+        if self.current_session and self.current_session.session_id == session_id:
+            raise ValueError("Cannot delete the currently active session")
+
+        session_file = self.conversations_dir / f"{session_id}.json"
+        if not session_file.exists():
+            return False
+
+        session_file.unlink()
+
+        # If the deleted session was the latest symlink target, remove the symlink too
+        latest = self.conversations_dir / "latest.json"
+        if latest.is_symlink():
+            try:
+                if latest.resolve() == session_file.resolve():
+                    latest.unlink()
+            except Exception:
+                pass
+
+        return True
+
+    def delete_all_sessions(self) -> int:
+        """Delete ALL saved sessions except the currently active one.
+
+        Returns:
+            Number of session files deleted.
+        """
+        deleted = 0
+        active_id = self.current_session.session_id if self.current_session else None
+
+        for file in self.conversations_dir.glob("session_*.json"):
+            try:
+                # Parse the session_id from filename (session_<id>.json)
+                sid = file.stem  # e.g. "session_20240101_120000_abc"
+                if active_id and sid == active_id:
+                    continue
+                file.unlink()
+                deleted += 1
+            except Exception:
+                continue
+
+        # Clean up latest.json symlink if it dangled
+        latest = self.conversations_dir / "latest.json"
+        if latest.is_symlink() and not latest.exists():
+            try:
+                latest.unlink()
+            except Exception:
+                pass
+
+        return deleted
         
         return deleted
     

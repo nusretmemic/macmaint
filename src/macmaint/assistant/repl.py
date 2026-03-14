@@ -82,7 +82,7 @@ TOOL_ICONS: Dict[str, str] = {
     "delegate_to_sub_agent":   "🤖",
 }
 
-SPECIAL_COMMANDS = {"help", "clear", "history", "status", "trust"}
+SPECIAL_COMMANDS = {"help", "clear", "history", "status", "trust", "new", "delete"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ class AssistantREPL:
                 f'  [bold bright_white]Fix[/bold bright_white]      [dim]"Fix the disk space problem"[/dim]\n'
                 f'  [bold bright_white]Analyse[/bold bright_white]  [dim]"Show me my memory trends"[/dim]\n'
                 f'  [bold bright_white]Optimise[/bold bright_white] [dim]"Optimise my Mac for video editing"[/dim]\n\n'
-                f"  [{MUTED}]Type [bold]help[/bold] for commands  ·  [bold]trust[/bold] to enable auto-fix  ·  [bold]exit[/bold] to quit[/{MUTED}]"
+                f"  [{MUTED}]Type [bold]help[/bold] for commands  ·  [bold]new[/bold] for a fresh session  ·  [bold]exit[/bold] to quit[/{MUTED}]"
             )
 
         self.console.print(Panel(
@@ -243,6 +243,8 @@ class AssistantREPL:
             "history": self._cmd_history,
             "status":  self._cmd_status,
             "trust":   self._cmd_trust,
+            "new":     self._cmd_new,
+            "delete":  self._cmd_delete,
         }
         handler = handlers.get(cmd)
         if handler:
@@ -260,6 +262,8 @@ class AssistantREPL:
         rows = [
             ("help",    "Show this help message"),
             ("clear",   "Clear screen (conversation preserved)"),
+            ("new",     "Start a new session (saves current first)"),
+            ("delete",  "Delete saved sessions"),
             ("history", "Show recent sessions"),
             ("status",  "Show current session info"),
             ("trust",   "Toggle auto-approve mode"),
@@ -390,6 +394,105 @@ class AssistantREPL:
                 box=box.ROUNDED,
             ))
         self.console.print()
+
+    def _cmd_new(self) -> None:
+        """Start a brand-new session, saving the current one first."""
+        self.session_manager.save_session(self.session)
+        self.session = self.session_manager.create_new_session()
+        # Reset in-session scan cache so the new session starts clean
+        self.tool_executor._last_scan_results = None
+        self.tool_executor._last_scan_time = None
+        self.console.clear()
+        self._show_welcome(is_resumed=False)
+        self.console.print(f"[{MUTED}]  New session started.[/{MUTED}]\n")
+
+    def _cmd_delete(self) -> None:
+        """Delete one or all saved sessions from within the REPL."""
+        from rich.prompt import Confirm
+        sessions = self.session_manager.list_sessions(limit=100)
+
+        self.console.print()
+
+        if not sessions:
+            self.console.print(Panel(
+                f"[{MUTED}]No saved sessions to delete.[/{MUTED}]",
+                border_style=ACCENT,
+                box=box.ROUNDED,
+            ))
+            self.console.print()
+            return
+
+        # Show the list
+        t = Table(box=box.SIMPLE_HEAD, show_header=True, header_style=f"bold {SECONDARY}")
+        t.add_column("#", style=MUTED, justify="right", no_wrap=True)
+        t.add_column("Session ID", style=MUTED, no_wrap=True)
+        t.add_column("Messages", justify="right", style="bright_white")
+        t.add_column("Last Active", style="bright_white")
+
+        for idx, s in enumerate(sessions, 1):
+            is_current = s["session_id"] == self.session.session_id
+            sid = (
+                f"[bold {PRIMARY}]{s['session_id']}  ← current[/bold {PRIMARY}]"
+                if is_current else s["session_id"]
+            )
+            t.add_row(str(idx), sid, str(s["message_count"]), _dim_time(s["last_active"]))
+
+        self.console.print(Panel(
+            t,
+            title=f"[bold {ACCENT}] Delete Sessions [/bold {ACCENT}]",
+            border_style=ACCENT,
+            padding=(0, 1),
+            box=box.ROUNDED,
+        ))
+        self.console.print()
+        self.console.print(f"  [{MUTED}]Enter a session number, a session ID, or[/{MUTED}] [bold]all[/bold] [{MUTED}]to delete everything.[/{MUTED}]")
+        self.console.print(f"  [{MUTED}]Press Enter to cancel.[/{MUTED}]\n")
+
+        from rich.prompt import Prompt as _Prompt
+        choice = _Prompt.ask(f"[bold {SECONDARY}]Delete[/bold {SECONDARY}]", default="").strip()
+
+        if not choice:
+            self.console.print(f"[{MUTED}]Cancelled.[/{MUTED}]\n")
+            return
+
+        if choice.lower() == "all":
+            non_current = [s for s in sessions if s["session_id"] != self.session.session_id]
+            if not non_current:
+                self.console.print(f"[{MUTED}]Only the current session exists — nothing else to delete.[/{MUTED}]\n")
+                return
+            if not Confirm.ask(f"Delete all {len(non_current)} other session(s)?", default=False):
+                self.console.print(f"[{MUTED}]Cancelled.[/{MUTED}]\n")
+                return
+            deleted = self.session_manager.delete_all_sessions()
+            self.console.print(f"[bold {SUCCESS}]Deleted {deleted} session(s).[/bold {SUCCESS}]\n")
+            return
+
+        # Resolve by number or by ID
+        target_id: Optional[str] = None
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(sessions):
+                target_id = sessions[idx]["session_id"]
+        else:
+            # Check if it matches any session_id substring/exact
+            matches = [s for s in sessions if s["session_id"] == choice]
+            if matches:
+                target_id = matches[0]["session_id"]
+
+        if not target_id:
+            self.console.print(f"[bold {WARNING}]No matching session for '{choice}'.[/bold {WARNING}]\n")
+            return
+
+        try:
+            ok = self.session_manager.delete_session(target_id)
+        except ValueError as e:
+            self.console.print(f"[bold {WARNING}]{e}[/bold {WARNING}]\n")
+            return
+
+        if ok:
+            self.console.print(f"[bold {SUCCESS}]Session '{target_id}' deleted.[/bold {SUCCESS}]\n")
+        else:
+            self.console.print(f"[bold {WARNING}]Session '{target_id}' not found.[/bold {WARNING}]\n")
 
     # ── Conversation turn ─────────────────────────────────────────────────────
 

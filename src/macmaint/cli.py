@@ -783,6 +783,135 @@ def chat(new):
             traceback.print_exc()
 
 
+# ── Session management commands ───────────────────────────────────────────────
+
+@cli.group()
+def session():
+    """Manage conversation sessions.
+
+    List, create, or delete saved chat sessions.
+    """
+    pass
+
+
+@session.command(name="list")
+@click.option('--limit', default=20, show_default=True, help='Maximum number of sessions to show')
+def session_list(limit):
+    """List saved conversation sessions."""
+    from rich.table import Table
+    from rich import box as rbox
+    from macmaint.assistant.session import SessionManager
+    from macmaint.utils.profile import ProfileManager
+
+    config = get_config()
+    sm = SessionManager(config, ProfileManager())
+    sessions = sm.list_sessions(limit=limit)
+
+    if not sessions:
+        print_info("No saved sessions found.")
+        return
+
+    t = Table(box=rbox.SIMPLE_HEAD, show_header=True, header_style="bold cyan")
+    t.add_column("Session ID", style="dim", no_wrap=True)
+    t.add_column("Messages", justify="right")
+    t.add_column("Started", style="bright_white")
+    t.add_column("Last Active", style="bright_white")
+
+    for s in sessions:
+        from datetime import datetime as _dt
+        def _fmt(iso):
+            try:
+                return _dt.fromisoformat(iso).strftime("%b %d %Y  %H:%M")
+            except Exception:
+                return iso
+        t.add_row(s["session_id"], str(s["message_count"]), _fmt(s["started_at"]), _fmt(s["last_active"]))
+
+    console.print()
+    console.print(t)
+    console.print(f"  [dim]{len(sessions)} session(s) stored in ~/.macmaint/conversations/[/dim]\n")
+
+
+@session.command(name="new")
+def session_new():
+    """Start a new chat session (alias for: macmaint chat --new)."""
+    from macmaint.assistant.repl import AssistantREPL
+    from macmaint.assistant.session import SessionManager
+    from macmaint.assistant.tools import ToolExecutor
+    from macmaint.assistant.orchestrator import Orchestrator
+    from macmaint.utils.profile import ProfileManager
+
+    config = get_config()
+    if not config.api_key:
+        print_error("No API key found. Run 'macmaint init' to configure")
+        import sys; sys.exit(1)
+
+    profile_manager = ProfileManager()
+    session_manager = SessionManager(config, profile_manager)
+    tool_executor = ToolExecutor(config, profile_manager)
+
+    try:
+        orchestrator = Orchestrator(config, tool_executor, profile_manager)
+    except Exception as e:
+        print_error(f"Failed to initialize AI orchestrator: {e}")
+        import sys; sys.exit(1)
+
+    repl = AssistantREPL(session_manager, tool_executor, orchestrator=orchestrator)
+    try:
+        repl.start(force_new=True)
+    except KeyboardInterrupt:
+        console.print("\n\nSession interrupted. Goodbye!")
+
+
+@session.command(name="delete")
+@click.argument('session_id', required=False)
+@click.option('--all', 'delete_all', is_flag=True, help='Delete ALL saved sessions')
+@click.option('--yes', '-y', is_flag=True, help='Skip confirmation prompt')
+def session_delete(session_id, delete_all, yes):
+    """Delete a specific session or all sessions.
+
+    SESSION_ID  The session ID to delete (from: macmaint session list).
+    Use --all to wipe every saved session at once.
+    """
+    from macmaint.assistant.session import SessionManager
+    from macmaint.utils.profile import ProfileManager
+
+    if not session_id and not delete_all:
+        print_error("Provide a SESSION_ID or use --all to delete everything.")
+        print_info("Run 'macmaint session list' to see available sessions.")
+        return
+
+    config = get_config()
+    sm = SessionManager(config, ProfileManager())
+
+    if delete_all:
+        sessions = sm.list_sessions(limit=1000)
+        count = len(sessions)
+        if count == 0:
+            print_info("No sessions found.")
+            return
+        if not yes:
+            click.confirm(f"Delete all {count} session(s)? This cannot be undone.", abort=True)
+        deleted = sm.delete_all_sessions()
+        print_success(f"Deleted {deleted} session(s).")
+        return
+
+    # Single session delete
+    if not yes:
+        click.confirm(f"Delete session '{session_id}'?", abort=True)
+
+    try:
+        deleted = sm.delete_session(session_id)
+    except ValueError as e:
+        print_error(str(e))
+        return
+
+    if deleted:
+        print_success(f"Session '{session_id}' deleted.")
+    else:
+        print_error(f"Session '{session_id}' not found.")
+        print_info("Run 'macmaint session list' to see available sessions.")
+
+
 def _calculate_health_score(metrics) -> int:
     """Calculate overall health score (0-100)."""
     score = 100
