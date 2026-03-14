@@ -734,6 +734,55 @@ def insights():
         sys.exit(1)
 
 
+@cli.command()
+@click.option('--new', is_flag=True, help='Start a new conversation (ignore previous sessions)')
+def start(new):
+    """Start interactive AI assistant mode.
+    
+    Launch a conversational interface where you can chat with the AI assistant
+    to scan, fix, and optimize your Mac through natural language.
+    """
+    from macmaint.assistant.repl import AssistantREPL
+    from macmaint.assistant.session import SessionManager
+    from macmaint.assistant.tools import ToolExecutor
+    from macmaint.assistant.orchestrator import Orchestrator
+    from macmaint.utils.profile import ProfileManager
+    
+    print_header("MacMaint Interactive Assistant")
+    console.print()
+    
+    # Load config and check API key
+    config = get_config()
+    if not config.api_key:
+        print_error("No API key found. Run 'macmaint init' to configure")
+        sys.exit(1)
+    
+    # Initialize components
+    profile_manager = ProfileManager()
+    session_manager = SessionManager(config, profile_manager)
+    tool_executor = ToolExecutor(config, profile_manager)
+    
+    # Initialize orchestrator (Sprint 2)
+    try:
+        orchestrator = Orchestrator(config, tool_executor, profile_manager)
+    except Exception as e:
+        print_error(f"Failed to initialize AI orchestrator: {e}")
+        sys.exit(1)
+    
+    # Start REPL
+    repl = AssistantREPL(session_manager, tool_executor, orchestrator=orchestrator)
+    
+    try:
+        repl.start(force_new=new)
+    except KeyboardInterrupt:
+        console.print("\n\nSession interrupted. Goodbye!")
+    except Exception as e:
+        print_error(f"Session error: {e}")
+        if config.verbose:
+            import traceback
+            traceback.print_exc()
+
+
 def _calculate_health_score(metrics) -> int:
     """Calculate overall health score (0-100)."""
     score = 100
