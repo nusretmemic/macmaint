@@ -4,7 +4,6 @@ Provides a Rich terminal interface for multi-turn conversations with
 line-by-line streaming, Markdown rendering, and live tool-call spinners.
 """
 
-import sys
 import time
 import threading
 from typing import Dict, List, Optional, Tuple
@@ -456,19 +455,23 @@ class AssistantREPL:
                         Text("✓", style=f"bold {SUCCESS}"),
                     )
                 else:  # error
+                    err = entry.get("error_detail", "")
+                    err_suffix = f"  {err}" if err else ""
                     t.add_row(
                         Text(icon),
-                        Text(f" {label}", style=MUTED),
+                        Text.assemble(
+                            Text(f" {label}", style=MUTED),
+                            Text(err_suffix, style=f"bold {DANGER}"),
+                        ),
                         Text("✗", style=f"bold {DANGER}"),
                     )
             return t
 
         def on_stream_chunk(chunk: str) -> None:
-            # If a live context is running we need to stop it before writing
-            # raw bytes so they don't corrupt the Live display.
+            # Buffer silently — we render the complete response as a Rich Panel
+            # once streaming finishes.  Writing raw bytes to stdout mid-Live
+            # would corrupt the spinner display and produce word-per-line output.
             response_buffer.append(chunk)
-            sys.stdout.write(chunk)
-            sys.stdout.flush()
 
         def on_tool_call(tool_name: str, args: dict) -> None:
             nonlocal live_ctx
@@ -496,13 +499,15 @@ class AssistantREPL:
                 else:
                     live_ctx.update(_render_tool_table())
 
-        def _finish_tool(success: bool = True) -> None:
+        def _finish_tool(success: bool = True, error_detail: str = "") -> None:
             """Mark the most-recent running tool as done/error."""
             for entry in reversed(tool_log):
                 if entry["status"] == "running":
                     elapsed = time.monotonic() - entry["started"]
                     entry["elapsed"] = f"({elapsed:.1f}s)"
                     entry["status"] = "done" if success else "error"
+                    if error_detail:
+                        entry["error_detail"] = error_detail
                     break
             if live_ctx:
                 live_ctx.update(_render_tool_table())
@@ -525,16 +530,19 @@ class AssistantREPL:
         ticker_thread = threading.Thread(target=_ticker, daemon=True)
         ticker_thread.start()
 
+        def on_tool_result(tool_name: str, result: dict) -> None:
+            success = result.get("success", True)
+            error_detail = result.get("error", "") if not success else ""
+            _finish_tool(success=success, error_detail=error_detail)
+
         try:
             response_message = self.orchestrator.process_message(
                 session=self.session,
                 user_message=user_input,
                 on_stream_chunk=on_stream_chunk,
                 on_tool_call=on_tool_call,
+                on_tool_result=on_tool_result,
             )
-
-            # Mark last running tool as done (if any)
-            _finish_tool(success=True)
 
         except Exception as exc:
             _finish_tool(success=False)
@@ -566,12 +574,6 @@ class AssistantREPL:
 
         # Print a separator between tool output and the assistant's text reply
         if tool_log:
-            self.console.print()
-
-        if response_buffer:
-            # Tokens were already streamed raw → newline then re-render as Markdown
-            sys.stdout.write("\n")
-            sys.stdout.flush()
             self.console.print()
 
         if full_response.strip():

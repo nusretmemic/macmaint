@@ -82,6 +82,7 @@ class Orchestrator:
         user_message: str,
         on_stream_chunk: Optional[Callable[[str], None]] = None,
         on_tool_call: Optional[Callable[[str, Dict], None]] = None,
+        on_tool_result: Optional[Callable[[str, Dict], None]] = None,
     ) -> ConversationMessage:
         """Process a user message and return the assistant's response.
 
@@ -93,6 +94,8 @@ class Orchestrator:
             on_stream_chunk: Called with each streamed text chunk.
             on_tool_call:    Called when a tool or sub-agent is invoked
                              (tool_name, args).
+            on_tool_result:  Called after each tool completes with
+                             (tool_name, result_dict).
 
         Returns:
             ConversationMessage with the final assistant response.
@@ -103,7 +106,7 @@ class Orchestrator:
         try:
             messages = self._build_messages(session, user_message)
             response_text = self._run_streaming_loop(
-                messages, on_stream_chunk, on_tool_call, session
+                messages, on_stream_chunk, on_tool_call, on_tool_result, session
             )
             return ConversationMessage(
                 role="assistant",
@@ -162,6 +165,7 @@ class Orchestrator:
         messages: List[ChatCompletionMessageParam],
         on_stream_chunk: Optional[Callable[[str], None]],
         on_tool_call: Optional[Callable[[str, Dict], None]],
+        on_tool_result: Optional[Callable[[str, Dict], None]],
         session: SessionState,
         max_rounds: int = 8,
     ) -> str:
@@ -278,6 +282,9 @@ class Orchestrator:
                         "error": str(exc),
                         "summary": f"{fn_name} failed: {exc}",
                     }
+
+                if on_tool_result:
+                    on_tool_result(fn_name, result)
 
                 messages.append({
                     "role": "tool",
