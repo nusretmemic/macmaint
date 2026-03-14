@@ -1,40 +1,107 @@
 """Interactive REPL interface for conversational AI assistant.
 
 Provides a Rich terminal interface for multi-turn conversations with
-line-by-line streaming and Markdown rendering.
+line-by-line streaming, Markdown rendering, and live tool-call spinners.
 """
 
 import sys
+import time
+import threading
 from typing import Dict, List, Optional, Tuple
 
+from rich.align import Align
+from rich.columns import Columns
+from rich.console import Group
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.rule import Rule
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
 from rich import box
 
 from macmaint.assistant.session import SessionManager, SessionState
 from macmaint.assistant.tools import ToolExecutor
-from macmaint.utils.formatters import console, confirm, print_error, print_success, print_info
+from macmaint.utils.formatters import console, confirm, print_error
 from datetime import datetime
 
 
-# Human-readable labels for each tool name
+# ── Brand palette ────────────────────────────────────────────────────────────
+PRIMARY   = "bright_cyan"
+SECONDARY = "cyan"
+ACCENT    = "bright_blue"
+MUTED     = "grey62"
+SUCCESS   = "bright_green"
+WARNING   = "yellow"
+DANGER    = "bright_red"
+
+# ── ASCII wordmark ────────────────────────────────────────────────────────────
+_WORDMARK = (
+    " [bold bright_cyan]███╗   ███╗ █████╗  ██████╗[/bold bright_cyan]"
+    "[bold cyan]███╗   ███╗ █████╗ ██╗███╗  ██╗████████╗[/bold cyan]\n"
+    " [bold bright_cyan]████╗ ████║██╔══██╗██╔════╝[/bold bright_cyan]"
+    "[bold cyan]████╗ ████║██╔══██╗██║████╗ ██║╚══██╔══╝[/bold cyan]\n"
+    " [bold bright_cyan]██╔████╔██║███████║██║     [/bold bright_cyan]"
+    "[bold cyan]██╔████╔██║███████║██║██╔██╗██║   ██║   [/bold cyan]\n"
+    " [bold bright_cyan]██║╚██╔╝██║██╔══██║██║     [/bold bright_cyan]"
+    "[bold cyan]██║╚██╔╝██║██╔══██║██║██║╚████║   ██║   [/bold cyan]\n"
+    " [bold bright_cyan]██║ ╚═╝ ██║██║  ██║╚██████╗[/bold bright_cyan]"
+    "[bold cyan]██║ ╚═╝ ██║██║  ██║██║██║ ╚███║   ██║   [/bold cyan]\n"
+    " [bold bright_cyan]╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝[/bold bright_cyan]"
+    "[bold cyan]╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚══╝   ╚═╝   [/bold cyan]"
+)
+
+# ── Human-readable tool labels ────────────────────────────────────────────────
 TOOL_LABELS: Dict[str, str] = {
-    "scan_system":            "Scanning your system",
-    "fix_issues":             "Fixing issues",
-    "clean_caches":           "Cleaning caches",
-    "optimize_memory":        "Optimising memory",
-    "manage_startup_items":   "Managing startup items",
-    "get_disk_analysis":      "Analysing disk usage",
-    "get_system_status":      "Checking system status",
-    "show_trends":            "Analysing trends",
-    "create_maintenance_plan":"Creating maintenance plan",
-    "explain_issue":          "Analysing issue details",
-    "delegate_to_sub_agent":  "Delegating to sub-agent",
+    "scan_system":             "Scanning your system",
+    "fix_issues":              "Fixing issues",
+    "clean_caches":            "Cleaning caches",
+    "optimize_memory":         "Optimising memory",
+    "manage_startup_items":    "Managing startup items",
+    "get_disk_analysis":       "Analysing disk usage",
+    "get_system_status":       "Checking system status",
+    "show_trends":             "Analysing trends",
+    "create_maintenance_plan": "Creating maintenance plan",
+    "explain_issue":           "Analysing issue details",
+    "delegate_to_sub_agent":   "Delegating to sub-agent",
+}
+
+# ── Tool icon palette ─────────────────────────────────────────────────────────
+TOOL_ICONS: Dict[str, str] = {
+    "scan_system":             "󰣇",   # nf-md-apple  (fallback: 🔍)
+    "fix_issues":              "🔧",
+    "clean_caches":            "🧹",
+    "optimize_memory":         "⚡",
+    "manage_startup_items":    "🚀",
+    "get_disk_analysis":       "💾",
+    "get_system_status":       "📊",
+    "show_trends":             "📈",
+    "create_maintenance_plan": "📋",
+    "explain_issue":           "🔎",
+    "delegate_to_sub_agent":   "🤖",
 }
 
 SPECIAL_COMMANDS = {"help", "clear", "history", "status", "trust"}
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _rule(title: str = "", style: str = SECONDARY) -> Rule:
+    return Rule(title=title, style=style)
+
+
+def _dim_time(iso: str) -> str:
+    """Render an ISO timestamp as a short human-friendly string."""
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.strftime("%b %d, %Y  %H:%M")
+    except Exception:
+        return iso
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 class AssistantREPL:
     """Interactive Read-Eval-Print Loop for conversational AI assistant."""
@@ -51,9 +118,7 @@ class AssistantREPL:
         self.console = console
         self.session: Optional[SessionState] = None
 
-    # ------------------------------------------------------------------
-    # Entry point
-    # ------------------------------------------------------------------
+    # ── Entry point ───────────────────────────────────────────────────────────
 
     def start(self, force_new: bool = False) -> None:
         """Main REPL loop."""
@@ -77,39 +142,47 @@ class AssistantREPL:
 
                 except KeyboardInterrupt:
                     self.console.print("\n")
-                    if confirm("\nExit MacMaint Assistant?", default=False):
+                    if confirm("\nExit MacMaint?", default=False):
                         self._handle_exit()
                         break
-                    self.console.print("Continuing...\n")
+                    self.console.print(f"[{MUTED}]Continuing…[/{MUTED}]\n")
 
         finally:
             if self.session:
                 self.session_manager.clear_trust_mode(self.session)
                 self.session_manager.save_session(self.session)
 
-    # ------------------------------------------------------------------
-    # Welcome / goodbye
-    # ------------------------------------------------------------------
+    # ── Welcome / goodbye ─────────────────────────────────────────────────────
 
     def _show_welcome(self, is_resumed: bool = False) -> None:
+        self.console.print()
+        self.console.print(_wordmark_panel())
+        self.console.print()
+
         if is_resumed:
+            last = _dim_time(self.session.last_active)
+            msg_count = len(self.session.messages)
             body = (
-                "[bold cyan]Welcome back to MacMaint Assistant![/bold cyan]\n\n"
-                f"Resuming conversation from: {self.session.last_active}\n\n"
-                "Type [bold]'help'[/bold] for commands or [bold]'exit'[/bold] to quit"
+                f"[{PRIMARY}]Welcome back![/{PRIMARY}]  "
+                f"[{MUTED}]Resuming conversation · {msg_count} message{'s' if msg_count != 1 else ''} · last active {last}[/{MUTED}]\n\n"
+                f"[{MUTED}]Type [/][bold]help[/bold][{MUTED}] for commands or [/][bold]exit[/bold][{MUTED}] to quit.[/{MUTED}]"
             )
         else:
             body = (
-                "[bold cyan]Welcome to MacMaint AI Assistant![/bold cyan]\n\n"
-                "I can help you:\n"
-                "  • Scan your Mac for issues\n"
-                "  • Fix problems automatically\n"
-                "  • Optimise performance\n"
-                "  • Answer questions about your system\n\n"
-                "[dim]Try: \"Scan my Mac\" or \"How's my disk space?\"[/dim]\n"
-                "[dim]Type 'help' for commands or 'exit' to quit[/dim]"
+                f"  [{PRIMARY}]What can I do for you today?[/{PRIMARY}]\n\n"
+                f'  [bold bright_white]Scan[/bold bright_white]     [dim]"Scan my Mac for issues"[/dim]\n'
+                f'  [bold bright_white]Fix[/bold bright_white]      [dim]"Fix the disk space problem"[/dim]\n'
+                f'  [bold bright_white]Analyse[/bold bright_white]  [dim]"Show me my memory trends"[/dim]\n'
+                f'  [bold bright_white]Optimise[/bold bright_white] [dim]"Optimise my Mac for video editing"[/dim]\n\n'
+                f"  [{MUTED}]Type [bold]help[/bold] for commands  ·  [bold]trust[/bold] to enable auto-fix  ·  [bold]exit[/bold] to quit[/{MUTED}]"
             )
-        self.console.print(Panel(body, border_style="cyan", padding=(1, 2), box=box.ROUNDED))
+
+        self.console.print(Panel(
+            body,
+            border_style=SECONDARY,
+            padding=(1, 3),
+            box=box.ROUNDED,
+        ))
         self.console.print()
 
     def _handle_exit(self) -> None:
@@ -124,128 +197,212 @@ class AssistantREPL:
             if minutes > 0:
                 duration = f"{minutes} minute{'s' if minutes != 1 else ''}"
 
-        self.console.print(Panel(
-            f"[bold cyan]Thanks for using MacMaint Assistant![/bold cyan]\n\n"
-            f"Session duration: {duration}\n"
-            f"Messages: {len(self.session.messages)}\n\n"
-            "[dim]Your conversation has been saved.[/dim]\n"
-            "[dim]Run 'macmaint start' to resume anytime.[/dim]",
-            border_style="cyan",
-            padding=(1, 2),
-            box=box.ROUNDED,
-        ))
-        if deleted > 0:
-            self.console.print(f"[dim]Cleaned up {deleted} old session(s)[/dim]\n")
+        # Stats table
+        t = Table.grid(padding=(0, 2))
+        t.add_column(style=MUTED)
+        t.add_column(style="bold bright_white")
+        t.add_row("Session duration", duration)
+        t.add_row("Messages exchanged", str(len(self.session.messages)))
+        t.add_row("Conversation saved to", "~/.macmaint/conversations/")
 
-    # ------------------------------------------------------------------
-    # Input
-    # ------------------------------------------------------------------
+        self.console.print()
+        self.console.print(Panel(
+            Group(
+                Align.center(Text("Thanks for using MacMaint!", style=f"bold {PRIMARY}")),
+                Text(""),
+                t,
+                Text(""),
+                Align.center(Text("Run  macmaint start  to resume anytime.", style=MUTED)),
+            ),
+            border_style=PRIMARY,
+            padding=(1, 4),
+            box=box.DOUBLE_EDGE,
+        ))
+        self.console.print()
+        if deleted > 0:
+            self.console.print(f"[{MUTED}]  Cleaned up {deleted} old session(s)[/{MUTED}]\n")
+
+    # ── Input ─────────────────────────────────────────────────────────────────
 
     def _get_user_input(self) -> str:
+        self.console.print(_rule())
         try:
-            return Prompt.ask("[bold green]You[/bold green]").strip()
+            return Prompt.ask(f"[bold {SUCCESS}] You[/bold {SUCCESS}]").strip()
         except EOFError:
             return "exit"
 
     def _should_exit(self, user_input: str) -> bool:
         return user_input.lower() in {"exit", "quit", "bye", "goodbye"}
 
-    # ------------------------------------------------------------------
-    # Special commands
-    # ------------------------------------------------------------------
+    # ── Special commands ──────────────────────────────────────────────────────
 
     def _handle_special_command(self, user_input: str) -> None:
         cmd = user_input.lower()
+        handlers = {
+            "help":    self._cmd_help,
+            "clear":   self._cmd_clear,
+            "history": self._cmd_history,
+            "status":  self._cmd_status,
+            "trust":   self._cmd_trust,
+        }
+        handler = handlers.get(cmd)
+        if handler:
+            handler()
 
-        if cmd == "help":
-            self._cmd_help()
-        elif cmd == "clear":
-            self.console.clear()
-            self._show_welcome(is_resumed=True)
-        elif cmd == "history":
-            self._cmd_history()
-        elif cmd == "status":
-            self._cmd_status()
-        elif cmd == "trust":
-            self._cmd_trust()
+    def _cmd_clear(self) -> None:
+        self.console.clear()
+        self._show_welcome(is_resumed=True)
 
     def _cmd_help(self) -> None:
+        # Commands table
+        cmd_table = Table.grid(padding=(0, 2))
+        cmd_table.add_column(style=f"bold {SECONDARY}", no_wrap=True)
+        cmd_table.add_column(style="bright_white")
+        rows = [
+            ("help",    "Show this help message"),
+            ("clear",   "Clear screen (conversation preserved)"),
+            ("history", "Show recent sessions"),
+            ("status",  "Show current session info"),
+            ("trust",   "Toggle auto-approve mode"),
+            ("exit",    "Exit the assistant"),
+        ]
+        for cmd, desc in rows:
+            cmd_table.add_row(cmd, desc)
+
+        # Examples table
+        ex_table = Table.grid(padding=(0, 2))
+        ex_table.add_column(style=MUTED, no_wrap=True)
+        ex_table.add_column(style="italic bright_white")
+        examples = [
+            ("→", '"Scan my Mac for issues"'),
+            ("→", '"Fix the disk space problem"'),
+            ("→", '"Show me my memory usage trends"'),
+            ("→", '"Optimise my Mac for video editing"'),
+            ("→", '"What\'s using all my CPU?"'),
+        ]
+        for arrow, ex in examples:
+            ex_table.add_row(arrow, ex)
+
+        body = Group(
+            Text(f"Commands", style=f"bold {PRIMARY}"),
+            Text(""),
+            cmd_table,
+            Text(""),
+            Text("Example questions", style=f"bold {PRIMARY}"),
+            Text(""),
+            ex_table,
+        )
+
+        self.console.print()
         self.console.print(Panel(
-            "[bold]Available Commands:[/bold]\n\n"
-            "  [cyan]help[/cyan]     — Show this help message\n"
-            "  [cyan]clear[/cyan]    — Clear screen (conversation preserved)\n"
-            "  [cyan]history[/cyan]  — Show recent sessions\n"
-            "  [cyan]status[/cyan]   — Show current session info\n"
-            "  [cyan]trust[/cyan]    — Toggle auto-approve mode (trust mode)\n"
-            "  [cyan]exit[/cyan]     — Exit assistant\n\n"
-            "[bold]Example Questions:[/bold]\n\n"
-            "  • \"Scan my Mac for issues\"\n"
-            "  • \"Fix the disk space problem\"\n"
-            "  • \"Show me my memory usage trends\"\n"
-            "  • \"Optimise my Mac for video editing\"",
-            border_style="blue",
-            padding=(1, 2),
+            body,
+            title=f"[bold {ACCENT}] MacMaint Help [/bold {ACCENT}]",
+            border_style=ACCENT,
+            padding=(1, 3),
             box=box.ROUNDED,
         ))
         self.console.print()
 
     def _cmd_history(self) -> None:
-        sessions = self.session_manager.list_sessions(limit=5)
-        self.console.print("[bold]Recent Sessions:[/bold]\n")
-        if sessions:
-            for s in sessions:
-                self.console.print(
-                    f"  • {s['session_id']}: {s['message_count']} messages "
-                    f"(last active: {s['last_active']})"
-                )
+        sessions = self.session_manager.list_sessions(limit=8)
+        self.console.print()
+
+        if not sessions:
+            self.console.print(Panel(
+                f"[{MUTED}]No previous sessions found.[/{MUTED}]",
+                title=f"[bold {ACCENT}] Session History [/bold {ACCENT}]",
+                border_style=ACCENT,
+                box=box.ROUNDED,
+            ))
         else:
-            self.console.print("  [dim]No previous sessions found[/dim]")
+            t = Table(box=box.SIMPLE_HEAD, show_header=True, header_style=f"bold {SECONDARY}")
+            t.add_column("Session ID", style=MUTED, no_wrap=True)
+            t.add_column("Messages", justify="right", style="bright_white")
+            t.add_column("Last Active", style="bright_white")
+
+            for s in sessions:
+                is_current = s["session_id"] == self.session.session_id
+                sid = f"[bold {PRIMARY}]{s['session_id']}  ← current[/bold {PRIMARY}]" if is_current else s["session_id"]
+                t.add_row(
+                    sid,
+                    str(s["message_count"]),
+                    _dim_time(s["last_active"]),
+                )
+
+            self.console.print(Panel(
+                t,
+                title=f"[bold {ACCENT}] Session History [/bold {ACCENT}]",
+                border_style=ACCENT,
+                padding=(0, 1),
+                box=box.ROUNDED,
+            ))
+
         self.console.print()
 
     def _cmd_status(self) -> None:
-        summary = self.session_manager.get_session_summary(self.session)
+        s = self.session
+        trust = self.session_manager.get_trust_mode(s)
+        trust_label = (
+            f"[bold {SUCCESS}]enabled (auto-fix safe)[/bold {SUCCESS}]"
+            if trust == "auto_fix_safe"
+            else f"[{MUTED}]disabled[/{MUTED}]"
+        )
+
+        t = Table.grid(padding=(0, 2))
+        t.add_column(style=MUTED)
+        t.add_column(style="bold bright_white")
+        t.add_row("Session ID",  s.session_id)
+        t.add_row("Started",     _dim_time(s.started_at))
+        t.add_row("Last active", _dim_time(s.last_active))
+        t.add_row("Messages",    str(len(s.messages)))
+        t.add_row("Trust mode",  trust_label)
+
+        self.console.print()
         self.console.print(Panel(
-            summary, title="Session Status", border_style="blue", box=box.ROUNDED
+            t,
+            title=f"[bold {ACCENT}] Session Status [/bold {ACCENT}]",
+            border_style=ACCENT,
+            padding=(1, 3),
+            box=box.ROUNDED,
         ))
         self.console.print()
 
     def _cmd_trust(self) -> None:
-        """Toggle trust (auto-approve) mode for the current session."""
         current = self.session_manager.get_trust_mode(self.session)
+        self.console.print()
 
         if current == "auto_fix_safe":
             self.session_manager.clear_trust_mode(self.session)
-            self.console.print(
-                Panel(
-                    "[yellow]Trust mode disabled.[/yellow]\n\n"
-                    "I will ask for confirmation before making any changes.",
-                    border_style="yellow",
-                    padding=(1, 2),
-                    box=box.ROUNDED,
-                )
-            )
+            self.console.print(Panel(
+                f"[bold {WARNING}]Trust mode disabled.[/bold {WARNING}]\n\n"
+                f"[{MUTED}]I will ask for confirmation before making any changes.[/{MUTED}]",
+                border_style=WARNING,
+                padding=(1, 3),
+                box=box.ROUNDED,
+            ))
         else:
             self.session_manager.set_trust_mode(self.session, "auto_fix_safe")
-            self.console.print(
-                Panel(
-                    "[green]Trust mode enabled.[/green]\n\n"
-                    "I will automatically apply safe fixes without asking.\n"
-                    "[dim]Type 'trust' again to disable.[/dim]",
-                    border_style="green",
-                    padding=(1, 2),
-                    box=box.ROUNDED,
-                )
-            )
+            self.console.print(Panel(
+                f"[bold {SUCCESS}]Trust mode enabled.[/bold {SUCCESS}]\n\n"
+                f"[{MUTED}]Safe fixes will be applied automatically without confirmation.\n"
+                f"Type [bold]trust[/bold] again to disable.[/{MUTED}]",
+                border_style=SUCCESS,
+                padding=(1, 3),
+                box=box.ROUNDED,
+            ))
         self.console.print()
 
-    # ------------------------------------------------------------------
-    # Conversation turn
-    # ------------------------------------------------------------------
+    # ── Conversation turn ─────────────────────────────────────────────────────
 
     def _process_turn(self, user_input: str) -> None:
         self.session_manager.add_message(self.session, "user", user_input)
         self.console.print()
-        self.console.print("[bold blue]Assistant:[/bold blue]")
+
+        # Assistant label
+        self.console.print(
+            f"[bold {PRIMARY}]  MacMaint[/bold {PRIMARY}]"
+            f"[{MUTED}]  ·  thinking…[/{MUTED}]"
+        )
         self.console.print()
 
         try:
@@ -260,30 +417,113 @@ class AssistantREPL:
         self.console.print()
 
     def _call_orchestrator(self, user_input: str) -> str:
-        """Call the orchestrator with streaming, per-tool progress, and Markdown rendering."""
+        """Call the orchestrator with streaming, live tool spinners, and Markdown rendering."""
 
-        # Buffer for the full streamed response text
         response_buffer: List[str] = []
 
-        # Per-tool tracking: list of (tool_name, status) tuples
-        tool_log: List[Tuple[str, str]] = []
+        # Per-tool tracking: list of (display_name, status, label, icon, start_time)
+        tool_log: List[Dict] = []
+
+        # Live-spinner state: the Live context is opened on first tool call and
+        # kept open until the orchestrator returns (so spinners animate while
+        # the model is thinking between tool calls).
+        live_ctx: Optional[Live] = None
+        live_lock = threading.Lock()
+
+        def _render_tool_table() -> Table:
+            """Build the live-rendered tool-progress table."""
+            t = Table.grid(padding=(0, 1))
+            t.add_column(width=3)   # icon
+            t.add_column()          # label + elapsed
+            t.add_column(width=3)   # status glyph
+            for entry in tool_log:
+                icon  = entry["icon"]
+                label = entry["label"]
+                status = entry["status"]
+                elapsed = entry.get("elapsed", "")
+
+                if status == "running":
+                    spin = Spinner("dots", style=f"bold {SECONDARY}")
+                    label_text = Text(f" {label}", style=f"bold {PRIMARY}")
+                    elapsed_text = Text(f"  {elapsed}", style=MUTED)
+                    glyph = spin
+                    combined = Text.assemble(label_text, elapsed_text)
+                    t.add_row(Text(icon), combined, spin)
+                elif status == "done":
+                    t.add_row(
+                        Text(icon),
+                        Text(f" {label}", style=MUTED),
+                        Text("✓", style=f"bold {SUCCESS}"),
+                    )
+                else:  # error
+                    t.add_row(
+                        Text(icon),
+                        Text(f" {label}", style=MUTED),
+                        Text("✗", style=f"bold {DANGER}"),
+                    )
+            return t
 
         def on_stream_chunk(chunk: str) -> None:
-            """Write each token directly to stdout to avoid Rich newlines."""
+            # If a live context is running we need to stop it before writing
+            # raw bytes so they don't corrupt the Live display.
             response_buffer.append(chunk)
             sys.stdout.write(chunk)
             sys.stdout.flush()
 
         def on_tool_call(tool_name: str, args: dict) -> None:
-            """Show a progress line for each tool invocation."""
-            # Strip sub-agent prefix for display (e.g. "scan_agent:scan_system")
+            nonlocal live_ctx
             display_name = tool_name.split(":")[-1] if ":" in tool_name else tool_name
             label = TOOL_LABELS.get(display_name, f"Running {display_name}")
-            tool_log.append((display_name, "running"))
-            # Newline before indicator so it doesn't run into streaming text
-            self.console.print()
-            self.console.print(f"[cyan]⏳ {label}...[/cyan]")
-            self.console.print()
+            icon  = TOOL_ICONS.get(display_name, "⚙")
+            entry = {
+                "name":    display_name,
+                "label":   label,
+                "icon":    icon,
+                "status":  "running",
+                "started": time.monotonic(),
+                "elapsed": "",
+            }
+            with live_lock:
+                tool_log.append(entry)
+                if live_ctx is None:
+                    live_ctx = Live(
+                        _render_tool_table(),
+                        console=self.console,
+                        refresh_per_second=12,
+                        transient=False,
+                    )
+                    live_ctx.start()
+                else:
+                    live_ctx.update(_render_tool_table())
+
+        def _finish_tool(success: bool = True) -> None:
+            """Mark the most-recent running tool as done/error."""
+            for entry in reversed(tool_log):
+                if entry["status"] == "running":
+                    elapsed = time.monotonic() - entry["started"]
+                    entry["elapsed"] = f"({elapsed:.1f}s)"
+                    entry["status"] = "done" if success else "error"
+                    break
+            if live_ctx:
+                live_ctx.update(_render_tool_table())
+
+        # Thread that keeps elapsed time ticking in the live display
+        _stop_ticker = threading.Event()
+
+        def _ticker():
+            while not _stop_ticker.is_set():
+                time.sleep(0.25)
+                if live_ctx:
+                    for entry in tool_log:
+                        if entry["status"] == "running":
+                            elapsed = time.monotonic() - entry["started"]
+                            entry["elapsed"] = f"({elapsed:.1f}s)"
+                    with live_lock:
+                        if live_ctx:
+                            live_ctx.update(_render_tool_table())
+
+        ticker_thread = threading.Thread(target=_ticker, daemon=True)
+        ticker_thread.start()
 
         try:
             response_message = self.orchestrator.process_message(
@@ -293,47 +533,83 @@ class AssistantREPL:
                 on_tool_call=on_tool_call,
             )
 
-            full_response = response_message.content or ""
+            # Mark last running tool as done (if any)
+            _finish_tool(success=True)
 
-            # If the response was streamed token-by-token, the text is already
-            # on screen — just add a newline and render it again as Markdown.
-            # If no streaming happened (tool-only turn with no final text),
-            # nothing was printed yet so we render now.
-            if response_buffer:
-                # Tokens were printed raw — move to a new line then re-render
-                # as Markdown so the user sees nicely formatted output.
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                self.console.print()
-                self.console.print(Markdown(full_response))
-            else:
-                # Pure tool-call turn — render the summary as Markdown
-                self.console.print(Markdown(full_response))
+        except Exception as exc:
+            _finish_tool(success=False)
+            _stop_ticker.set()
+            if live_ctx:
+                live_ctx.stop()
 
-            # Mark all tools as complete
             if tool_log:
-                self.console.print()
-                for tool_name, _ in tool_log:
-                    label = TOOL_LABELS.get(tool_name, tool_name)
-                    self.console.print(f"[green]✅ {label}[/green]")
-
-            return full_response
-
-        except Exception as e:
-            if tool_log:
-                last_tool, _ = tool_log[-1]
-                label = TOOL_LABELS.get(last_tool, last_tool)
-                self.console.print()
-                self.console.print(f"[red]❌ {label} — failed[/red]")
                 self.console.print()
 
             context = f"User asked: {user_input}"
-            suggestions = self.orchestrator.suggest_alternatives(str(e), context)
-            error_msg = f"I encountered an error: {e}\n\n{suggestions}"
-            self.console.print(Markdown(error_msg))
+            suggestions = self.orchestrator.suggest_alternatives(str(exc), context)
+            error_msg = f"I encountered an error: {exc}\n\n{suggestions}"
+            self.console.print(Panel(
+                Markdown(error_msg),
+                border_style=DANGER,
+                padding=(1, 2),
+                box=box.ROUNDED,
+            ))
             return error_msg
+
+        finally:
+            _stop_ticker.set()
+            if live_ctx:
+                live_ctx.stop()
+                live_ctx = None
+
+        full_response = response_message.content or ""
+
+        # Print a separator between tool output and the assistant's text reply
+        if tool_log:
+            self.console.print()
+
+        if response_buffer:
+            # Tokens were already streamed raw → newline then re-render as Markdown
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self.console.print()
+
+        if full_response.strip():
+            self.console.print(Panel(
+                Markdown(full_response),
+                border_style=SECONDARY,
+                padding=(1, 2),
+                box=box.ROUNDED,
+            ))
+
+        return full_response
 
     def _handle_error(self, error: Exception) -> str:
         error_msg = str(error)
         print_error(f"\n{error_msg}\n")
-        return f"I encountered an error: {error_msg}\n\nPlease try rephrasing your request or type 'help' for guidance."
+        return (
+            f"I encountered an error: {error_msg}\n\n"
+            "Please try rephrasing your request or type 'help' for guidance."
+        )
+
+
+# ── Wordmark helper ───────────────────────────────────────────────────────────
+
+def _wordmark_panel() -> Panel:
+    """Return a centred ASCII-art title panel."""
+    subtitle = Text.assemble(
+        ("  AI-powered macOS maintenance assistant  ", f"{MUTED}"),
+    )
+    body = Group(
+        Align.center(Text.from_markup(_WORDMARK)),
+        Align.center(subtitle),
+        Align.center(Text.from_markup(
+            f"[{MUTED}]v0.4.0   ·   type [bold]help[/bold] to get started[/{MUTED}]"
+        )),
+    )
+    return Panel(
+        body,
+        border_style=PRIMARY,
+        padding=(1, 2),
+        box=box.DOUBLE_EDGE,
+    )
