@@ -4,6 +4,7 @@ Defines all MacMaint capabilities as OpenAI functions and provides execution wra
 """
 
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from macmaint.config import Config
@@ -98,23 +99,7 @@ TOOLS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "optimize_memory",
-            "description": "Optimize memory usage by killing high-memory processes (with user confirmation), clearing inactive memory, and suggesting adjustments.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "aggressive": {
-                        "type": "boolean",
-                        "description": "If true, be more aggressive with process termination. Default: false"
-                    }
-                },
-                "required": []
-            }
-        }
-    },
+
     {
         "type": "function",
         "function": {
@@ -282,7 +267,12 @@ class ToolExecutor:
             
             method = getattr(self, method_name)
             result = method(**arguments)
-            
+
+            # Tools that need a prior scan return a structured signal instead
+            # of raising — pass it straight through without re-wrapping.
+            if result.get('needs_scan'):
+                return result
+
             return {
                 "success": True,
                 "data": result['data'],
@@ -312,7 +302,7 @@ class ToolExecutor:
         """
         # Check if we have recent results (< 5 minutes old)
         if (self._last_scan_results and self._last_scan_time and 
-            (datetime.now() - self._last_scan_time).seconds < 300):
+            (datetime.now() - self._last_scan_time).total_seconds() < 300):
             metrics, issues = self._last_scan_results
         else:
             # Perform scan
@@ -320,8 +310,10 @@ class ToolExecutor:
             self._last_scan_results = (metrics, issues)
             self._last_scan_time = datetime.now()
         
-        # Save to history
-        self.history_manager.save_snapshot(metrics, issues)
+        # Save to history — include issue count so _show_trends can track it
+        snapshot = metrics.to_dict()
+        snapshot['_issue_count'] = len(issues)
+        self.history_manager.save_snapshot(snapshot)
         
         # Format for AI consumption
         issue_list = [
@@ -388,10 +380,9 @@ class ToolExecutor:
         stats = self.fixer.fix_issues(to_fix)
         
         # Update profile
-        profile = self.profile_manager.load()
         for issue in to_fix:
             if stats['succeeded'] > 0:
-                self.profile_manager.track_fixed_issue(issue.id, str(issue.category))
+                self.profile_manager.track_fix(str(issue.category), {'issue_id': issue.id, 'title': issue.title})
         
         return {
             'data': {
@@ -459,41 +450,132 @@ class ToolExecutor:
     
     def _clean_caches(self, categories: List[str] = None, size_limit_mb: int = None) -> Dict:
         """Clean system and application caches.
-        
+
         Args:
-            categories: Cache categories to clean (browser, system, app, logs, temp)
-            size_limit_mb: Maximum space to free in MB
-        
+            categories: Cache categories to clean (browser, system, app, logs, temp).
+                        If omitted, cleans all safe categories.
+            size_limit_mb: Stop after freeing this many MB (None = no limit).
+
         Returns:
             Dict with 'data' and 'summary' keys
         """
-        # For Sprint 1, return placeholder
-        # Full implementation will use existing disk module functionality
+        import shutil
+
+        target_categories = set(categories) if categories else {'browser', 'system', 'app'}
+        size_limit_bytes = size_limit_mb * 1024 * 1024 if size_limit_mb else None
+
+        # Map category keywords to disk-module cache_breakdown keys
+        category_prefixes = {
+            'browser': ('browser_',),
+            'system':  ('system',),
+            'app':     ('app_support',),
+        }
+
+        # Get cache paths from last scan if available, otherwise do a quick disk scan
+        disk_data: Dict = {}
+        if self._last_scan_results:
+            metrics, _ = self._last_scan_results
+            metrics_dict = metrics.to_dict()
+            disk_data = metrics_dict.get('disk', {}) or {}
+
+        cache_breakdown: Dict = disk_data.get('cache_breakdown', {}) or {}
+
+        total_freed_bytes = 0
+        total_files_deleted = 0
+        cleaned: List[str] = []
+        failed: List[str] = []
+
+        for breakdown_key, category_obj in cache_breakdown.items():
+            # Determine which user-facing category this belongs to
+            matched_category = None
+            for cat, prefixes in category_prefixes.items():
+                if any(breakdown_key.startswith(p) for p in prefixes):
+                    matched_category = cat
+                    break
+
+            if matched_category not in target_categories:
+                continue
+
+            # category_obj may be a dict (from to_dict()) or a Pydantic model
+            if hasattr(category_obj, 'path'):
+                cache_path_str = category_obj.path
+            elif isinstance(category_obj, dict):
+                cache_path_str = category_obj.get('path', '')
+            else:
+                continue
+
+            cache_path = Path(cache_path_str)
+            if not cache_path.exists():
+                continue
+
+            try:
+                for item in cache_path.iterdir():
+                    if size_limit_bytes and total_freed_bytes >= size_limit_bytes:
+                        break
+                    try:
+                        if item.is_file():
+                            freed = item.stat().st_size
+                            item.unlink()
+                            total_freed_bytes += freed
+                            total_files_deleted += 1
+                        elif item.is_dir():
+                            freed = sum(
+                                f.stat().st_size
+                                for f in item.rglob('*') if f.is_file()
+                            )
+                            shutil.rmtree(item, ignore_errors=True)
+                            total_freed_bytes += freed
+                            total_files_deleted += 1
+                    except (OSError, PermissionError):
+                        pass
+                cleaned.append(breakdown_key)
+            except (OSError, PermissionError) as exc:
+                failed.append(f"{breakdown_key}: {exc}")
+
+        # Also clean /tmp and $TMPDIR if 'temp' requested
+        if 'temp' in target_categories or (not categories):
+            import os
+            temp_paths = [Path('/tmp'), Path(os.getenv('TMPDIR', '/tmp'))]
+            for temp_path in temp_paths:
+                if not temp_path.exists():
+                    continue
+                try:
+                    for item in temp_path.iterdir():
+                        if size_limit_bytes and total_freed_bytes >= size_limit_bytes:
+                            break
+                        try:
+                            if item.is_file():
+                                freed = item.stat().st_size
+                                item.unlink()
+                                total_freed_bytes += freed
+                                total_files_deleted += 1
+                        except (OSError, PermissionError):
+                            pass
+                    if 'temp' not in cleaned:
+                        cleaned.append('temp')
+                except (OSError, PermissionError):
+                    pass
+
+        freed_mb = round(total_freed_bytes / (1024 * 1024), 1)
+
+        # Track cleanup in profile
+        self.profile_manager.track_cleanup()
+
         return {
             'data': {
-                'categories_cleaned': categories or ['browser', 'system', 'app'],
-                'space_freed_mb': 0,
-                'files_deleted': 0
+                'categories_cleaned': cleaned,
+                'space_freed_mb': freed_mb,
+                'files_deleted': total_files_deleted,
+                'failed': failed,
             },
-            'summary': "Cache cleaning will be fully implemented in Sprint 2"
+            'summary': f"Cleaned {len(cleaned)} cache categories, freed {freed_mb} MB ({total_files_deleted} files deleted)"
         }
     
     def _optimize_memory(self, aggressive: bool = False) -> Dict:
-        """Optimize memory usage.
-        
-        Args:
-            aggressive: If True, be more aggressive with process termination
-        
-        Returns:
-            Dict with 'data' and 'summary' keys
-        """
-        # For Sprint 1, return placeholder
+        """Memory optimization is not yet implemented."""
         return {
-            'data': {
-                'processes_killed': 0,
-                'memory_freed_mb': 0
-            },
-            'summary': "Memory optimization will be fully implemented in Sprint 2"
+            'data': {'processes_killed': 0, 'memory_freed_mb': 0},
+            'summary': "Memory optimization is not available yet. Use get_system_status to see memory usage and top processes."
         }
     
     def _manage_startup_items(self, action: str, item_ids: List[str] = None) -> Dict:
@@ -508,23 +590,37 @@ class ToolExecutor:
         """
         # Get startup items from last scan
         if action == "list":
-            if self._last_scan_results:
-                metrics, _ = self._last_scan_results
-                startup_data = metrics.startup or {}
-                items = startup_data.get('items', [])
-                
+            if not self._last_scan_results:
                 return {
-                    'data': {
-                        'items': items,
-                        'count': len(items)
-                    },
-                    'summary': f"Found {len(items)} startup items"
+                    'success': False,
+                    'needs_scan': True,
+                    'summary': "No scan results available. Run scan_system first, then retry manage_startup_items."
                 }
+
+            metrics, _ = self._last_scan_results
+            startup_data = metrics.startup or {}
+            # StartupMetrics uses login_items / launch_agents / launch_daemons
+            if hasattr(startup_data, 'login_items'):
+                # Still a Pydantic object — convert first
+                startup_dict = startup_data.model_dump() if hasattr(startup_data, 'model_dump') else {}
             else:
-                return {
-                    'data': {'items': [], 'count': 0},
-                    'summary': "No scan data available. Run scan_system first."
-                }
+                startup_dict = startup_data if isinstance(startup_data, dict) else {}
+
+            login_items    = startup_dict.get('login_items', [])
+            launch_agents  = startup_dict.get('launch_agents', [])
+            launch_daemons = startup_dict.get('launch_daemons', [])
+            items = login_items + launch_agents + launch_daemons
+
+            return {
+                'data': {
+                    'items':               items,
+                    'count':               len(items),
+                    'login_items_count':   len(login_items),
+                    'launch_agents_count': len(launch_agents),
+                    'launch_daemons_count': len(launch_daemons),
+                },
+                'summary': f"Found {len(items)} startup items ({len(login_items)} login, {len(launch_agents)} agents, {len(launch_daemons)} daemons)"
+            }
         
         # For disable/enable, placeholder for Sprint 1
         return {
@@ -557,11 +653,16 @@ class ToolExecutor:
         
         return {
             'data': {
-                'total_gb': disk_data.get('total_gb', 0),
-                'used_gb': disk_data.get('used_gb', 0),
-                'free_gb': disk_data.get('free_gb', 0),
+                'total_gb':     disk_data.get('total_gb', 0),
+                'used_gb':      disk_data.get('used_gb', 0),
+                'free_gb':      disk_data.get('free_gb', 0),
                 'usage_percent': disk_data.get('percent_used', 0),
-                'breakdown': disk_data.get('cache_breakdown', {})
+                'breakdown':    disk_data.get('cache_breakdown', {}),
+                'large_files':  disk_data.get('large_files', []),
+                'log_size_gb':  disk_data.get('log_size_gb', 0),
+                'log_files':    disk_data.get('log_files', {}),
+                'temp_size_gb': disk_data.get('temp_size_gb', 0),
+                'cache_size_gb': disk_data.get('cache_size_gb', 0),
             },
             'summary': f"Disk usage: {disk_data.get('used_gb', 0):.1f}GB / {disk_data.get('total_gb', 0):.1f}GB ({disk_data.get('percent_used', 0):.1f}%)"
         }
@@ -585,31 +686,119 @@ class ToolExecutor:
         disk_data = metrics_dict.get('disk', {}) or {}
         memory_data = metrics_dict.get('memory', {}) or {}
         cpu_data = metrics_dict.get('cpu', {}) or {}
-        
+        battery_data = metrics_dict.get('battery', {}) or {}
+        network_data = metrics_dict.get('network', {}) or {}
+        startup_data = metrics_dict.get('startup', {}) or {}
+
         critical_issues = [i for i in issues if 'critical' in str(i.severity).lower()]
-        
+
         disk_pct = disk_data.get('percent_used', 0)
         mem_pct = memory_data.get('percent_used', 0)
         cpu_pct = cpu_data.get('cpu_percent', 0)
 
+        # Top processes (already sorted by memory_mb desc by the memory module)
+        raw_processes = memory_data.get('top_processes', []) or []
+        top_processes = [
+            {
+                'name':           p.get('name', 'unknown'),
+                'memory_mb':      round(p.get('memory_mb', 0), 1),
+                'memory_percent': round(p.get('memory_percent', 0), 1),
+                'category':       p.get('category', 'background'),
+            }
+            for p in raw_processes[:8]
+        ]
+
+        # Memory breakdown (wired / active / inactive / compressed)
+        raw_breakdown = memory_data.get('breakdown') or {}
+        mem_breakdown = {}
+        if raw_breakdown:
+            mem_breakdown = {
+                'wired_gb':      round(raw_breakdown.get('wired_gb', 0), 2),
+                'active_gb':     round(raw_breakdown.get('active_gb', 0), 2),
+                'inactive_gb':   round(raw_breakdown.get('inactive_gb', 0), 2),
+                'compressed_gb': round(raw_breakdown.get('compressed_gb', 0), 2),
+                'pressure':      raw_breakdown.get('pressure_level', 'normal'),
+            }
+
+        # CPU top processes
+        cpu_top = [
+            {
+                'name':        p.get('name', 'unknown'),
+                'cpu_percent': round(p.get('cpu_percent', 0), 1),
+                'category':    p.get('category', 'background'),
+            }
+            for p in (cpu_data.get('top_processes', []) or [])[:5]
+        ]
+
+        # Battery summary (omit if not present)
+        battery_summary: Dict = {}
+        if battery_data.get('is_present'):
+            battery_summary = {
+                'percent':              battery_data.get('percent', 0),
+                'is_charging':          battery_data.get('is_charging', False),
+                'health':               battery_data.get('health', 'Unknown'),
+                'cycle_count':          battery_data.get('cycle_count', 0),
+                'max_capacity_percent': battery_data.get('max_capacity_percent', 100),
+                'time_remaining_min':   battery_data.get('time_remaining'),
+            }
+
+        # Network summary
+        network_summary: Dict = {}
+        if network_data:
+            network_summary = {
+                'bytes_sent_gb':   round(network_data.get('bytes_sent_gb', 0), 3),
+                'bytes_recv_gb':   round(network_data.get('bytes_recv_gb', 0), 3),
+                'connections':     network_data.get('connections_count', 0),
+                'errors_in':       network_data.get('error_in', 0),
+                'errors_out':      network_data.get('error_out', 0),
+            }
+
+        # Startup summary
+        startup_summary: Dict = {}
+        if startup_data:
+            total_startup = (
+                startup_data.get('login_items_count', 0) +
+                startup_data.get('launch_agents_count', 0) +
+                startup_data.get('launch_daemons_count', 0)
+            )
+            startup_summary = {
+                'total_items':          total_startup,
+                'login_items_count':    startup_data.get('login_items_count', 0),
+                'launch_agents_count':  startup_data.get('launch_agents_count', 0),
+                'launch_daemons_count': startup_data.get('launch_daemons_count', 0),
+            }
+
         status = {
             'disk': {
-                'free_gb': disk_data.get('free_gb', 0),
-                'usage_percent': disk_pct,
-                'status': 'critical' if disk_pct > 90 else 'warning' if disk_pct > 80 else 'ok'
+                'free_gb':        disk_data.get('free_gb', 0),
+                'usage_percent':  disk_pct,
+                'status': 'critical' if disk_pct > 90 else 'warning' if disk_pct > 80 else 'ok',
             },
             'memory': {
-                'available_gb': memory_data.get('available_gb', 0),
-                'usage_percent': mem_pct,
-                'status': 'critical' if mem_pct > 90 else 'warning' if mem_pct > 80 else 'ok'
+                'total_gb':       memory_data.get('total_gb', 0),
+                'used_gb':        memory_data.get('used_gb', 0),
+                'available_gb':   memory_data.get('available_gb', 0),
+                'usage_percent':  mem_pct,
+                'status':         'critical' if mem_pct > 90 else 'warning' if mem_pct > 80 else 'ok',
+                'top_processes':  top_processes,
+                'breakdown':      mem_breakdown,
             },
             'cpu': {
-                'usage_percent': cpu_pct,
-                'status': 'critical' if cpu_pct > 90 else 'warning' if cpu_pct > 80 else 'ok'
+                'usage_percent':  cpu_pct,
+                'status':         'critical' if cpu_pct > 90 else 'warning' if cpu_pct > 80 else 'ok',
+                'top_processes':  cpu_top,
+                'load_average':   cpu_data.get('load_average', []),
             },
-            'critical_issues': len(critical_issues),
-            'overall_status': 'critical' if critical_issues else 'ok'
+            'critical_issues':  len(critical_issues),
+            'overall_status':   'critical' if critical_issues else 'ok',
         }
+
+        if battery_summary:
+            status['battery'] = battery_summary
+        if network_summary:
+            status['network'] = network_summary
+        if startup_summary:
+            status['startup'] = startup_summary
         
         return {
             'data': status,
@@ -639,9 +828,9 @@ class ToolExecutor:
         
         # Calculate trends
         trends = {
-            'disk_usage': [s['metrics'].get('disk', {}).get('percent_used', 0) for s in snapshots],
+            'disk_usage':   [s['metrics'].get('disk', {}).get('percent_used', 0) for s in snapshots],
             'memory_usage': [s['metrics'].get('memory', {}).get('percent_used', 0) for s in snapshots],
-            'issue_count': [len(s.get('issues', [])) for s in snapshots]
+            'issue_count':  [s['metrics'].get('_issue_count', len(s.get('issues', []))) for s in snapshots],
         }
         
         return {

@@ -236,8 +236,12 @@ class DiskModule(BaseModule):
             
             try:
                 # Scan only immediate files
+                _LOG_EXTENSIONS = {'.log', '.asl', '.tracev3', '.logarchive', '.gz'}
                 for item in log_path.iterdir():
-                    if item.is_file() and ('.log' in item.name.lower()):
+                    if item.is_file() and (
+                        any(item.name.lower().endswith(ext) for ext in _LOG_EXTENSIONS)
+                        or '.log' in item.name.lower()
+                    ):
                         try:
                             file_size = item.stat().st_size
                             size += file_size
@@ -283,35 +287,39 @@ class DiskModule(BaseModule):
         """Find large files that haven't been accessed recently (optimized)."""
         threshold_mb = self.config.get("large_file_threshold_mb", 500)
         threshold_bytes = threshold_mb * 1024 * 1024
-        
+
         large_files = []
+        # Scan the most common user locations for large files
         scan_paths = [
             Path.home() / "Downloads",
+            Path.home() / "Desktop",
+            Path.home() / "Documents",
+            Path.home() / "Movies",
+            Path.home() / "Music" / "Music" / "Media",
         ]
-        
+
+        seen_paths = set()
+
         for scan_path in scan_paths:
             if not scan_path.exists():
                 continue
-            
+
             try:
-                # Only scan immediate files in Downloads
+                # Scan immediate files (one level deep to stay fast)
                 for item in scan_path.iterdir():
-                    if item.is_file():
+                    if item.is_file() and str(item) not in seen_paths:
                         try:
                             size = item.stat().st_size
                             if size >= threshold_bytes:
                                 age_days = get_file_age_days(item)
                                 large_files.append({
                                     'path': str(item),
-                                    'size_mb': size / (1024 * 1024),
+                                    'size_mb': round(size / (1024 * 1024), 1),
                                     'age_days': int(age_days)
                                 })
+                                seen_paths.add(str(item))
                         except (OSError, PermissionError):
                             pass
-                    
-                    # Limit to top 10 largest files
-                    if len(large_files) >= 10:
-                        break
             except (OSError, PermissionError):
                 pass
         

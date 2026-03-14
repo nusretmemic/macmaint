@@ -50,13 +50,13 @@ def tool_executor(mock_config, mock_profile_manager):
 
 class TestToolSchemas:
     def test_tool_count(self):
-        assert len(TOOLS) == 11
+        assert len(TOOLS) == 10
 
     def test_all_have_function_name(self):
         names = {t["function"]["name"] for t in TOOLS}
         expected = {
             "scan_system", "fix_issues", "explain_issue", "clean_caches",
-            "optimize_memory", "manage_startup_items", "get_disk_analysis",
+            "manage_startup_items", "get_disk_analysis",
             "get_system_status", "show_trends", "create_maintenance_plan",
             "delegate_to_sub_agent",
         }
@@ -183,8 +183,8 @@ class TestManageStartupItems:
     def test_list_without_scan(self, tool_executor):
         tool_executor._last_scan_results = None
         result = tool_executor.execute("manage_startup_items", {"action": "list"})
-        assert result["success"] is True
-        assert result["data"]["count"] == 0
+        # No scan → needs_scan signal returned (no success key at root)
+        assert result.get("needs_scan") is True
 
     def test_list_after_scan(self, tool_executor):
         tool_executor.execute("scan_system", {})

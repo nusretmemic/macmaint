@@ -53,7 +53,7 @@ class TestAgentToolSubsets:
 
     def test_fix_tools_names(self):
         names = {t["function"]["name"] for t in _FIX_TOOLS}
-        assert names == {"fix_issues", "clean_caches", "optimize_memory", "manage_startup_items"}
+        assert names == {"fix_issues", "clean_caches", "manage_startup_items"}
 
     def test_analysis_tools_names(self):
         names = {t["function"]["name"] for t in _ANALYSIS_TOOLS}
