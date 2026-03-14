@@ -15,8 +15,13 @@ class DiskModule(BaseModule):
     
     def collect_metrics(self) -> Dict:
         """Collect disk space metrics."""
-        # Get disk usage
-        disk = psutil.disk_usage('/')
+        # On macOS with APFS, psutil.disk_usage('/') only measures the sealed
+        # system volume (~16 GB OS files).  All user data lives on the Data
+        # volume.  Use that when available, fall back to '/' on non-APFS or
+        # older macOS setups.
+        data_volume = Path("/System/Volumes/Data")
+        mount_point = str(data_volume) if data_volume.exists() else "/"
+        disk = psutil.disk_usage(mount_point)
         
         metrics = DiskMetrics(
             total_gb=bytes_to_gb(disk.total),
