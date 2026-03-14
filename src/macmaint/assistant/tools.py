@@ -365,7 +365,11 @@ class ToolExecutor:
         """
         # Get issues from last scan
         if not self._last_scan_results:
-            raise RuntimeError("No scan results available. Run scan_system first.")
+            return {
+                'success': False,
+                'needs_scan': True,
+                'summary': "No scan results available. Run scan_system first, then retry fix_issues."
+            }
         
         _, issues = self._last_scan_results
         
@@ -410,7 +414,11 @@ class ToolExecutor:
         """
         # Get issues from last scan
         if not self._last_scan_results:
-            raise RuntimeError("No scan results available. Run scan_system first.")
+            return {
+                'success': False,
+                'needs_scan': True,
+                'summary': "No scan results available. Run scan_system first, then retry explain_issue."
+            }
         
         _, issues = self._last_scan_results
         
@@ -535,7 +543,11 @@ class ToolExecutor:
         """
         # Get disk metrics from last scan
         if not self._last_scan_results:
-            raise RuntimeError("No scan results available. Run scan_system first.")
+            return {
+                'success': False,
+                'needs_scan': True,
+                'summary': "No scan results available. Run scan_system first, then retry get_disk_analysis."
+            }
         
         metrics, _ = self._last_scan_results
         
