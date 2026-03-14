@@ -6,6 +6,7 @@ Defines all MacMaint capabilities as OpenAI functions and provides execution wra
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+import json
 
 from macmaint.config import Config
 from macmaint.core.scanner import Scanner
@@ -261,7 +262,48 @@ class ToolExecutor:
         # Cache for scan results (avoid re-scanning)
         self._last_scan_results: Optional[Tuple[SystemMetrics, List[Issue]]] = None
         self._last_scan_time: Optional[datetime] = None
+        self._scan_cache_path = Path.home() / ".macmaint" / "last_scan_cache.json"
+
+        # H8: Restore last scan from disk so results survive across `macmaint chat` restarts
+        self._load_scan_cache()
     
+    def _load_scan_cache(self) -> None:
+        """H8: Load persisted scan results from disk (survive across sessions).
+
+        Cache is ignored if it is more than 30 minutes old so stale data is
+        never surfaced to the user without re-scanning.
+        """
+        try:
+            if not self._scan_cache_path.exists():
+                return
+            with open(self._scan_cache_path, 'r') as f:
+                raw = json.load(f)
+            cache_time = datetime.fromisoformat(raw['cached_at'])
+            age_seconds = (datetime.now() - cache_time).total_seconds()
+            if age_seconds > 1800:  # 30 minutes
+                return
+            metrics = SystemMetrics.model_validate(raw['metrics'])
+            issues = [Issue.model_validate(i) for i in raw['issues']]
+            self._last_scan_results = (metrics, issues)
+            self._last_scan_time = cache_time
+        except Exception:
+            # Never let a bad cache file break startup
+            pass
+
+    def _save_scan_cache(self, metrics: SystemMetrics, issues: List[Issue]) -> None:
+        """H8: Persist scan results to disk so the next session can reuse them."""
+        try:
+            self._scan_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                'cached_at': datetime.now().isoformat(),
+                'metrics': metrics.model_dump(),
+                'issues': [i.model_dump() for i in issues],
+            }
+            with open(self._scan_cache_path, 'w') as f:
+                json.dump(payload, f, indent=2)
+        except Exception:
+            pass
+
     def execute(self, function_name: str, arguments: Dict) -> Dict:
         """Execute a tool and return standardized result.
         
@@ -332,6 +374,8 @@ class ToolExecutor:
             metrics, issues = self.scanner.scan()
             self._last_scan_results = (metrics, issues)
             self._last_scan_time = datetime.now()
+            # H8: persist to disk so next session doesn't require a re-scan
+            self._save_scan_cache(metrics, issues)
         
         # Save to history — include issue count so _show_trends can track it
         snapshot = metrics.to_dict()
@@ -1008,49 +1052,105 @@ class ToolExecutor:
         }
     
     def _create_maintenance_plan(self) -> Dict:
-        """Generate personalized maintenance schedule.
-        
+        """Generate a data-driven maintenance schedule.
+
+        Uses the most recent scan results (if available) to tailor the plan to
+        actual system conditions, rather than returning a generic hardcoded list.
+
         Returns:
             Dict with 'data' and 'summary' keys
         """
-        # Load user profile for personalization
         profile = self.profile_manager.load()
         usage_patterns = profile.usage_patterns
-        
-        # Create basic maintenance plan
-        plan = {
-            'daily': [
-                'Check system status',
-                'Monitor memory usage'
-            ],
-            'weekly': [
-                'Scan for issues',
-                'Clean browser caches',
-                'Review startup items'
-            ],
-            'monthly': [
-                'Deep scan',
-                'Clean system caches',
-                'Review disk space usage',
-                'Update software'
-            ],
-            'personalized_recommendations': []
-        }
-        
-        # Add personalized recommendations based on profile
+
+        # --- Build base task lists ---
+        daily: List[str] = ['Check system status with get_system_status']
+        weekly: List[str] = ['Run a quick scan (scan_system quick=true)']
+        monthly: List[str] = ['Run a deep scan (scan_system quick=false)', 'Review and update software']
+
+        personalized: List[str] = []
+
+        # --- Tailor to live scan data when available ---
+        if self._last_scan_results:
+            metrics, issues = self._last_scan_results
+
+            # Disk
+            if metrics.disk:
+                used_pct = metrics.disk.used_percentage or 0
+                if used_pct >= 90:
+                    daily.append('Monitor disk space — currently critical (≥90% full)')
+                    weekly.append('Clean caches and review large files')
+                elif used_pct >= 75:
+                    weekly.append('Clean browser and system caches (disk >75% full)')
+                else:
+                    monthly.append('Review disk usage and clean caches')
+
+            # Memory
+            if metrics.memory:
+                used_pct = metrics.memory.used_percentage or 0
+                if used_pct >= 85:
+                    daily.append('Monitor memory usage — currently elevated (≥85%)')
+                    weekly.append('Review memory-heavy applications')
+                else:
+                    monthly.append('Review memory usage trends')
+
+            # Startup items
+            if metrics.startup:
+                item_count = (
+                    len(metrics.startup.login_items or []) +
+                    len(metrics.startup.launch_agents or []) +
+                    len(metrics.startup.launch_daemons or [])
+                )
+                if item_count > 12:
+                    weekly.append(f'Review startup items — {item_count} items detected (high)')
+                elif item_count > 6:
+                    monthly.append(f'Review startup items — {item_count} items detected')
+
+            # Issue-specific recommendations
+            critical_issues = [i for i in issues if 'critical' in str(i.severity).lower()]
+            warning_issues  = [i for i in issues if 'warning' in str(i.severity).lower()]
+
+            if critical_issues:
+                daily.append(
+                    f'Address {len(critical_issues)} critical issue(s): '
+                    + ', '.join(i.title for i in critical_issues[:3])
+                )
+            if warning_issues:
+                weekly.append(
+                    f'Review {len(warning_issues)} warning(s): '
+                    + ', '.join(i.title for i in warning_issues[:3])
+                )
+        else:
+            # Generic fallback when no scan data exists
+            weekly.extend(['Clean browser caches', 'Review startup items'])
+            monthly.extend(['Clean system caches', 'Review disk space usage'])
+
+        # --- Profile-based personalisation ---
         if usage_patterns.cleanup_frequency > 0:
-            plan['personalized_recommendations'].append(
-                f"You typically clean up every {usage_patterns.cleanup_frequency} days"
+            personalized.append(
+                f"You typically clean up every {usage_patterns.cleanup_frequency} days — "
+                f"consider scheduling a recurring weekly scan."
             )
-        
         if usage_patterns.most_common_issues:
-            plan['personalized_recommendations'].append(
-                f"Watch for: {', '.join(usage_patterns.most_common_issues[:3])}"
+            personalized.append(
+                f"Your most frequent issues: {', '.join(usage_patterns.most_common_issues[:3])}. "
+                "Pay extra attention to these areas."
             )
-        
+
+        plan = {
+            'daily':   daily,
+            'weekly':  weekly,
+            'monthly': monthly,
+            'personalized_recommendations': personalized,
+        }
+
         return {
             'data': plan,
-            'summary': f"Created maintenance plan with {len(plan['daily'])} daily, {len(plan['weekly'])} weekly, and {len(plan['monthly'])} monthly tasks"
+            'summary': (
+                f"Created maintenance plan with {len(daily)} daily, "
+                f"{len(weekly)} weekly, and {len(monthly)} monthly tasks"
+                + (" based on your latest scan results" if self._last_scan_results else "")
+            )
         }
 
     def _delete_files(self, paths: List[str]) -> Dict:

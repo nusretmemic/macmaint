@@ -156,7 +156,9 @@ class Orchestrator:
             {"role": "system", "content": self.system_prompt}
         ]
         for msg in session.messages:
-            messages.append({"role": msg.role, "content": msg.content or ""})
+            # Use the full OpenAI-format representation so tool_calls and
+            # tool_call_id are preserved on session resume (H7 fix).
+            messages.append(msg.to_openai_format())
         messages.append({"role": "user", "content": user_message})
         return messages
 

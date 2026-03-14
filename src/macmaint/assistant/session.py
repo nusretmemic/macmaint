@@ -521,12 +521,13 @@ Trust Mode: {session.trust_mode or 'Not set'}"""
         Returns:
             Anonymized session dictionary
         """
-        # Anonymize all message content
         for msg in session_dict['messages']:
-            if msg['role'] in ['assistant', 'tool']:
-                # Anonymize tool results and AI responses (may contain paths)
-                if msg['content']:
-                    msg['content'] = self.anonymizer._anonymize_string(msg['content'])
-            # Don't anonymize user messages - need context for conversation
+            # M6 fix: only anonymize plain-text assistant responses.
+            # - tool role messages contain JSON with structural identifiers (tool_call_id,
+            #   plist labels, etc.) — anonymizing them corrupts history on resume.
+            # - assistant messages that carry tool_calls have structured JSON content too.
+            # - user messages are left untouched (need context for conversation).
+            if msg['role'] == 'assistant' and not msg.get('tool_calls') and msg.get('content'):
+                msg['content'] = self.anonymizer._anonymize_string(msg['content'])
         
         return session_dict
