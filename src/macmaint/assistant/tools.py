@@ -645,13 +645,155 @@ class ToolExecutor:
                 'summary': f"Found {len(items)} startup items ({len(login_items)} login, {len(launch_agents)} agents, {len(launch_daemons)} daemons)"
             }
         
-        # For disable/enable, placeholder for Sprint 1
+        # For disable/enable, look up items from the last scan
+        if not self._last_scan_results:
+            return {
+                'success': False,
+                'needs_scan': True,
+                'summary': "No scan results available. Run scan_system first, then retry manage_startup_items."
+            }
+
+        if not item_ids:
+            return {
+                'data': {'action': action, 'items_modified': 0, 'results': []},
+                'summary': "No item IDs provided."
+            }
+
+        metrics, _ = self._last_scan_results
+        startup_data = metrics.startup or {}
+        if hasattr(startup_data, 'model_dump'):
+            startup_dict = startup_data.model_dump()
+        elif isinstance(startup_data, dict):
+            startup_dict = startup_data
+        else:
+            startup_dict = {}
+
+        all_items = (
+            startup_dict.get('login_items', []) +
+            startup_dict.get('launch_agents', []) +
+            startup_dict.get('launch_daemons', [])
+        )
+
+        # Build lookup: id -> item dict (deduplicate — login_items and launch_agents
+        # may both contain the same user-level plist)
+        item_map: Dict[str, Any] = {}
+        for it in all_items:
+            item_id = it.get('id') or it.get('name', '')
+            if item_id and item_id not in item_map:
+                item_map[item_id] = it
+
+        import subprocess, os
+
+        uid = os.getuid()
+        results = []
+        modified = 0
+
+        for req_id in item_ids:
+            item = item_map.get(req_id)
+            entry: Dict[str, Any] = {
+                'id': req_id,
+                'action': action,
+                'success': False,
+                'error': None,
+            }
+
+            if not item:
+                entry['error'] = f"Startup item '{req_id}' not found in last scan results"
+                results.append(entry)
+                continue
+
+            item_type  = item.get('type', '')
+            item_scope = item.get('scope', 'system')
+            plist_path = item.get('path', '')
+            label      = item.get('id') or item.get('name', req_id)
+
+            # Determine launchctl domain target
+            is_user = (item_type == 'login_item') or (item_type == 'launch_agent' and item_scope == 'user')
+            domain_target = f"gui/{uid}/{label}" if is_user else f"system/{label}"
+
+            try:
+                if action == 'disable':
+                    if is_user:
+                        # Unload the agent from the current login session
+                        cmd = ['launchctl', 'bootout', f'gui/{uid}', plist_path]
+                    else:
+                        # Mark permanently disabled (survives reboot); unload from system
+                        cmd = ['launchctl', 'bootout', 'system', plist_path]
+
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+                    # launchctl exits non-zero if the service wasn't loaded — that's fine,
+                    # it just means it was already stopped; persist the disabled state anyway.
+                    if not is_user:
+                        subprocess.run(
+                            ['launchctl', 'disable', f'system/{label}'],
+                            capture_output=True, text=True, timeout=10
+                        )
+
+                    if proc.returncode != 0 and 'No such process' not in proc.stderr and 'Could not find' not in proc.stderr:
+                        # Distinguish permission errors (system items without sudo)
+                        if 'Operation not permitted' in proc.stderr or 'Permission denied' in proc.stderr:
+                            entry['error'] = (
+                                f"Permission denied — system-level items require administrator privileges. "
+                                f"Run: sudo launchctl bootout system {plist_path}"
+                            )
+                            results.append(entry)
+                            continue
+
+                    entry['success'] = True
+                    modified += 1
+
+                elif action == 'enable':
+                    if is_user:
+                        cmd = ['launchctl', 'bootstrap', f'gui/{uid}', plist_path]
+                    else:
+                        subprocess.run(
+                            ['launchctl', 'enable', f'system/{label}'],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        cmd = ['launchctl', 'bootstrap', 'system', plist_path]
+
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+                    if proc.returncode != 0:
+                        if 'Operation not permitted' in proc.stderr or 'Permission denied' in proc.stderr:
+                            entry['error'] = (
+                                f"Permission denied — system-level items require administrator privileges. "
+                                f"Run: sudo launchctl bootstrap system {plist_path}"
+                            )
+                            results.append(entry)
+                            continue
+                        # "Service already loaded" is acceptable for enable
+                        if 'service already loaded' not in proc.stderr.lower() and 'already bootstrapped' not in proc.stderr.lower():
+                            entry['error'] = proc.stderr.strip() or f"launchctl returned exit code {proc.returncode}"
+                            results.append(entry)
+                            continue
+
+                    entry['success'] = True
+                    modified += 1
+
+            except subprocess.TimeoutExpired:
+                entry['error'] = "launchctl timed out"
+            except FileNotFoundError:
+                entry['error'] = "launchctl not found — this feature requires macOS"
+            except Exception as exc:
+                entry['error'] = str(exc)
+
+            results.append(entry)
+
+        succeeded = [r for r in results if r['success']]
+        failed    = [r for r in results if not r['success']]
+
         return {
             'data': {
-                'action': action,
-                'items_modified': 0
+                'action':         action,
+                'items_modified': modified,
+                'results':        results,
             },
-            'summary': f"Startup item {action} will be fully implemented in Sprint 2"
+            'summary': (
+                f"{action.capitalize()}d {len(succeeded)} startup item(s)"
+                + (f"; {len(failed)} failed" if failed else "")
+            )
         }
     
     def _get_disk_analysis(self) -> Dict:

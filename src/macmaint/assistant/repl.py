@@ -24,6 +24,7 @@ from rich import box
 from macmaint.assistant.session import SessionManager, SessionState
 from macmaint.assistant.tools import ToolExecutor
 from macmaint.utils.formatters import console, confirm, print_error
+from macmaint import __version__
 from datetime import datetime
 
 
@@ -709,7 +710,7 @@ def _wordmark_panel() -> Panel:
         Align.center(Text.from_markup(_WORDMARK)),
         Align.center(subtitle),
         Align.center(Text.from_markup(
-            f"[{MUTED}]v0.5.0   ·   type [bold]help[/bold] to get started[/{MUTED}]"
+            f"[{MUTED}]v{__version__}   ·   type [bold]help[/bold] to get started[/{MUTED}]"
         )),
     )
     return Panel(

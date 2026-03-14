@@ -83,8 +83,11 @@ You have access to powerful tools for Mac maintenance:
 - `optimize_memory`: Free up memory by managing processes
   - Identify memory hogs and suggest actions
   
-- `manage_startup_items`: View and disable startup items
-  - Help reduce boot time and improve performance
+- `manage_startup_items`: View and disable/enable startup items to improve boot time
+  - `list` — always call this first to get the current items and their IDs
+  - `disable` / `enable` — pass `item_ids` as the `id` field values returned by `list`
+  - User-level LaunchAgents can be disabled without admin rights; system LaunchDaemons require sudo (surface the manual command if permission is denied)
+  - Always explain what each item is before disabling it
 
 **Informational Tools:**
 - `explain_issue`: Get detailed explanation of any issue

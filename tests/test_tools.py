@@ -195,10 +195,14 @@ class TestManageStartupItems:
         assert result["success"] is True
 
     def test_disable_action(self, tool_executor):
+        # Requires a prior scan; without one the tool returns needs_scan, not success
+        tool_executor.execute("scan_system", {})
         result = tool_executor.execute(
-            "manage_startup_items", {"action": "disable", "item_ids": ["item1"]}
+            "manage_startup_items", {"action": "disable", "item_ids": ["nonexistent_item"]}
         )
-        assert result["success"] is True
+        # Top-level response has 'data' key; success flag is per-item
+        assert "data" in result
+        assert result["data"]["action"] == "disable"
 
 
 class TestCreateMaintenancePlan:

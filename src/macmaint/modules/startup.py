@@ -50,6 +50,7 @@ class StartupModule(BaseModule):
                             disabled = plist_data.get('Disabled', False)
                             
                             items.append({
+                                'id':      label,
                                 'name': label,
                                 'path': str(plist_file),
                                 'enabled': not disabled,
@@ -90,12 +91,13 @@ class StartupModule(BaseModule):
                             scope = 'user' if str(agent_path).startswith(str(Path.home())) else 'system'
                             
                             items.append({
-                                'name': label,
-                                'path': str(plist_file),
-                                'enabled': not disabled,
-                                'run_at_load': run_at_load,
-                                'scope': scope,
-                                'type': 'launch_agent'
+                                'id':           label,
+                                'name':         label,
+                                'path':         str(plist_file),
+                                'enabled':      not disabled,
+                                'run_at_load':  run_at_load,
+                                'scope':        scope,
+                                'type':         'launch_agent'
                             })
                     except (plistlib.InvalidFileException, Exception):
                         pass
@@ -124,11 +126,12 @@ class StartupModule(BaseModule):
                         run_at_load = plist_data.get('RunAtLoad', False)
                         
                         items.append({
-                            'name': label,
-                            'path': str(plist_file),
-                            'enabled': not disabled,
-                            'run_at_load': run_at_load,
-                            'type': 'launch_daemon'
+                            'id':           label,
+                            'name':         label,
+                            'path':         str(plist_file),
+                            'enabled':      not disabled,
+                            'run_at_load':  run_at_load,
+                            'type':         'launch_daemon'
                         })
                 except (plistlib.InvalidFileException, Exception):
                     pass
