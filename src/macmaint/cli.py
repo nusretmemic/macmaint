@@ -33,27 +33,51 @@ def init(api_key):
     """Initialize MacMaint configuration."""
     print_header("MacMaint Setup")
     console.print()
-    
+
     config = get_config()
-    
-    # Get API key
+    env_file = Path.home() / ".macmaint" / ".env"
+
+    # --- Detect existing configuration ---
+    existing_key = None
+    if env_file.exists():
+        try:
+            content = env_file.read_text()
+            for line in content.splitlines():
+                if line.startswith("OPENAI_API_KEY="):
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        existing_key = value
+                        break
+        except (OSError, PermissionError):
+            pass
+
+    if existing_key and not api_key:
+        # Show masked key: keep first 7 chars (e.g. "sk-proj") and last 4
+        masked = existing_key[:7] + "..." + existing_key[-4:] if len(existing_key) > 11 else "sk-..."
+        print_success(f"MacMaint is already configured (API key: {masked})")
+        console.print()
+        replace = click.confirm("Replace the existing API key?", default=False)
+        if not replace:
+            print_info("Configuration unchanged. Run 'macmaint scan' to analyze your system.")
+            return
+        console.print()
+
+    # --- Prompt for a new key if not supplied via flag ---
     if not api_key:
         api_key = click.prompt("Enter your OpenAI API key", hide_input=True)
-    
+
     if not api_key or not api_key.startswith("sk-"):
         print_error("Invalid API key format")
         sys.exit(1)
-    
+
     # Save API key to .env file
-    env_file = Path.home() / ".macmaint" / ".env"
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    
     with open(env_file, "w") as f:
         f.write(f"OPENAI_API_KEY={api_key}\n")
-    
+
     # Save default configuration
     config.save()
-    
+
     print_success(f"Configuration saved to {config.CONFIG_FILE}")
     print_success(f"API key saved to {env_file}")
     console.print()
