@@ -604,7 +604,7 @@ def _wordmark_panel() -> Panel:
         Align.center(Text.from_markup(_WORDMARK)),
         Align.center(subtitle),
         Align.center(Text.from_markup(
-            f"[{MUTED}]v0.4.0   ·   type [bold]help[/bold] to get started[/{MUTED}]"
+            f"[{MUTED}]v0.5.0   ·   type [bold]help[/bold] to get started[/{MUTED}]"
         )),
     )
     return Panel(

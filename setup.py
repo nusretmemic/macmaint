@@ -5,12 +5,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="macmaint",
-    version="0.4.0",
+    version="0.5.0",
     author="Nusret Memic",
     description="AI-powered Mac maintenance and optimization CLI agent",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/macmaint",
+    url="https://github.com/nusretmemic/macmaint",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     classifiers=[

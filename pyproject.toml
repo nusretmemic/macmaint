@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "macmaint"
-version = "0.4.0"
+version = "0.5.0"
 description = "AI-powered Mac maintenance and optimization CLI agent"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,8 +38,8 @@ dependencies = [
 macmaint = "macmaint.cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/macmaint"
-Repository = "https://github.com/yourusername/macmaint"
+Homepage = "https://github.com/nusretmemic/macmaint"
+Repository = "https://github.com/nusretmemic/macmaint"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
