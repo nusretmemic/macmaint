@@ -244,8 +244,43 @@ I can clean caches to free some RAM, or show you long-term memory trends. Which 
 - Caches: 15 GB (safely cleanable)
 
 Want me to clean those caches? Should free roughly 12–15 GB."
+
+## Battery Health Context
+
+MacMaint monitors battery health with a longevity-first philosophy. When discussing battery status, apply these thresholds and concepts:
+
+**Temperature thresholds (conservative):**
+- < 35°C → Normal (status: normal)
+- 35–39.9°C → Warm (status: warm, severity: INFO)
+- 40–49.9°C → Hot (status: hot, severity: WARNING)
+- ≥ 50°C → Critical (status: critical, severity: CRITICAL)
+
+**Capacity & cycle guidelines:**
+- Max capacity < 80% → battery_health_degraded (INFO if 70–79%, WARNING if < 70%)
+- Cycle count > 800 → battery_high_cycles (INFO if 800–1000, WARNING if > 1000)
+- Apple's typical rated cycle limit for modern MacBooks: 1000 cycles
+- Healthy charging range: keep battery between 20–80% for maximum longevity
+
+**Charging state field values:** `Charging` | `Discharging` | `Fully Charged` | `Not Charging`
+
+**Power draw:** `current_power_draw_w` is negative while discharging (draining), positive while charging in. Values more negative than –20 W indicate heavy drain.
+
+**Battery age:** `battery_age_days` — batteries older than 4 years (1460 days) may show unpredictable behaviour even if cycle count is low.
+
+**Key educational points to share with the user:**
+- A "charge cycle" = 100% of capacity consumed (two 50% charges = one cycle)
+- Always-plugged-in at 100% causes "calendar ageing" — high-voltage stress degrades cells over months
+- Heat is the biggest enemy: every 8°C above 25°C roughly halves the rate of electrolyte degradation
+- Optimised Battery Charging (System Settings > Battery) lets macOS learn your schedule and pause charging at 80% overnight, reducing high-voltage time
+- `battery_always_plugged_in` → recommend enabling Optimised Battery Charging
+- `battery_rapid_degradation` → check charging habits and temperature history
+
+**When battery data is present in get_system_status results, always mention:**
+1. Current charge % and whether it is charging
+2. Temperature status (if not 'normal' or 'unknown')
+3. Any active battery issues (from scan results if available)
     """
-    
+
     if profile_summary:
         # Add personalization based on user profile
         cleanup_freq = profile_summary.get('cleanup_frequency', 0)

@@ -944,11 +944,21 @@ class ToolExecutor:
         if battery_data.get('is_present'):
             battery_summary = {
                 'percent':              battery_data.get('percent', 0),
+                'charging_state':       battery_data.get('charging_state', 'Unknown'),
                 'is_charging':          battery_data.get('is_charging', False),
                 'health':               battery_data.get('health', 'Unknown'),
                 'cycle_count':          battery_data.get('cycle_count', 0),
                 'max_capacity_percent': battery_data.get('max_capacity_percent', 100),
                 'time_remaining_min':   battery_data.get('time_remaining'),
+                'temperature_c':        battery_data.get('temperature'),
+                'temperature_status':   battery_data.get('temperature_status', 'unknown'),
+                'current_power_draw_w': battery_data.get('current_power_draw_w'),
+                'charger_connected':    battery_data.get('charger_connected', False),
+                'charger_wattage':      battery_data.get('charger_wattage'),
+                'charger_type':         battery_data.get('charger_type', 'Unknown'),
+                'design_capacity_mah':  battery_data.get('design_capacity_mah', 0),
+                'current_capacity_mah': battery_data.get('current_capacity_mah', 0),
+                'battery_age_days':     battery_data.get('battery_age_days'),
             }
 
         # Network summary

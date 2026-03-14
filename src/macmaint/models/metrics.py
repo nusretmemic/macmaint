@@ -100,7 +100,30 @@ class BatteryMetrics(BaseModel):
     cycle_count: int = 0
     max_capacity_percent: float = 100.0
     health: str = "Unknown"
-    temperature: Optional[float] = None
+    temperature: Optional[float] = None  # Celsius
+
+    # Charging state detail
+    charging_state: str = "Unknown"  # Charging|Discharging|Fully Charged|Not Charging
+
+    # Power metrics (from ioreg)
+    current_capacity_mah: int = 0     # actual mAh right now
+    design_capacity_mah: int = 0      # factory spec mAh
+    current_power_draw_w: Optional[float] = None  # watts (positive = charging in, negative = draining)
+    voltage_mv: Optional[int] = None  # millivolts
+    amperage_ma: Optional[int] = None  # milliamps (signed; negative = discharging)
+
+    # Charger info
+    charger_connected: bool = False
+    charger_wattage: Optional[int] = None
+    charger_type: str = "Unknown"     # e.g. "USB-C PD", "MagSafe", "Unknown"
+
+    # Battery identity / age
+    battery_serial: Optional[str] = None
+    manufacture_date: Optional[str] = None  # ISO date (YYYY-MM-DD) when available
+    battery_age_days: Optional[int] = None
+
+    # Temperature status (derived)
+    temperature_status: str = "unknown"  # normal|warm|hot|critical|unknown
 
 
 class StartupMetrics(BaseModel):

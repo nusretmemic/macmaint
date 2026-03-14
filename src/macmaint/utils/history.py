@@ -80,15 +80,28 @@ class HistoryManager:
         return snapshots
     
     def _cleanup_old_snapshots(self):
-        """Remove snapshots older than retention_days."""
+        """Remove snapshots older than retention_days.
+
+        Battery data is retained for up to 365 days regardless of the
+        instance-level retention_days setting, because degradation-rate and
+        always-plugged-in calculations need long-range history.
+        """
+        BATTERY_RETENTION_DAYS = 365
+
         try:
-            cutoff_date = datetime.now() - timedelta(days=self.retention_days)
-            
+            default_cutoff = datetime.now() - timedelta(days=self.retention_days)
+            battery_cutoff = datetime.now() - timedelta(days=BATTERY_RETENTION_DAYS)
+
             for snapshot_file in self.history_dir.glob("*.json"):
                 try:
                     file_date = datetime.strptime(snapshot_file.stem, "%Y-%m-%d")
-                    
-                    if file_date < cutoff_date:
+
+                    # Always keep files within the battery retention window
+                    if file_date >= battery_cutoff:
+                        continue
+
+                    # Delete files older than the standard retention window
+                    if file_date < default_cutoff:
                         snapshot_file.unlink()
                 except (ValueError, OSError):
                     # Skip files we can't process
