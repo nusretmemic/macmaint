@@ -170,10 +170,11 @@ class AssistantREPL:
         else:
             body = (
                 f"  [{PRIMARY}]What can I do for you today?[/{PRIMARY}]\n\n"
-                f'  [bold bright_white]Scan[/bold bright_white]     [dim]"Scan my Mac for issues"[/dim]\n'
-                f'  [bold bright_white]Fix[/bold bright_white]      [dim]"Fix the disk space problem"[/dim]\n'
-                f'  [bold bright_white]Analyse[/bold bright_white]  [dim]"Show me my memory trends"[/dim]\n'
-                f'  [bold bright_white]Optimise[/bold bright_white] [dim]"Optimise my Mac for video editing"[/dim]\n\n'
+                f'  [bold bright_white]Scan[/bold bright_white]     [dim]"Scan my Mac and show what needs attention"[/dim]\n'
+                f'  [bold bright_white]Fix[/bold bright_white]      [dim]"Clean up disk space"[/dim]\n'
+                f'  [bold bright_white]Analyse[/bold bright_white]  [dim]"Show battery health trends"[/dim]\n'
+                f'  [bold bright_white]Optimise[/bold bright_white] [dim]"Optimise my Mac for video editing"[/dim]\n'
+                f'  [bold bright_white]Ask[/bold bright_white]      [dim]"Why is my Mac running slow?"[/dim]\n\n'
                 f"  [{MUTED}]Type [bold]help[/bold] for commands  ·  [bold]new[/bold] for a fresh session  ·  [bold]exit[/bold] to quit[/{MUTED}]"
             )
 
@@ -283,6 +284,9 @@ class AssistantREPL:
             ("→", '"Show me my memory usage trends"'),
             ("→", '"Optimise my Mac for video editing"'),
             ("→", '"What\'s using all my CPU?"'),
+            ("→", '"Show battery health"'),
+            ("→", '"What\'s draining my battery?"'),
+            ("→", '"Create a maintenance plan"'),
         ]
         for arrow, ex in examples:
             ex_table.add_row(arrow, ex)
