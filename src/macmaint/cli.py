@@ -736,7 +736,7 @@ def insights():
 
 @cli.command()
 @click.option('--new', is_flag=True, help='Start a new conversation (ignore previous sessions)')
-def start(new):
+def chat(new):
     """Start interactive AI assistant mode.
     
     Launch a conversational interface where you can chat with the AI assistant
