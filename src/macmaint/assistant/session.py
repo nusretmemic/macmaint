@@ -70,7 +70,7 @@ class ConversationMessage:
 @dataclass
 class SessionState:
     """Complete session state including conversation history."""
-    session_id: str  # Format: "session_YYYYMMDD_HHMMSS"
+    session_id: str  # Format: "session_YYYYMMDD_HHMMSS_ffffff"
     started_at: str  # ISO timestamp
     last_active: str  # ISO timestamp (updated on each turn)
     messages: List[ConversationMessage]
@@ -157,7 +157,7 @@ class SessionManager:
         Returns:
             New SessionState instance
         """
-        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         session = SessionState(
             session_id=session_id,
             started_at=datetime.now().isoformat(),
