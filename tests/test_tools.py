@@ -25,9 +25,9 @@ def tool_executor(mock_config, mock_profile_manager):
         # Default scan returns empty metrics + issues
         mock_metrics = MagicMock()
         mock_metrics.to_dict.return_value = {
-            "disk": {"total_gb": 500, "used_gb": 200, "free_gb": 300, "usage_percent": 40, "breakdown": {}},
-            "memory": {"available_gb": 8, "usage_percent": 50},
-            "cpu": {"usage_percent": 20},
+            "disk": {"total_gb": 500, "used_gb": 200, "free_gb": 300, "percent_used": 40, "cache_breakdown": {}},
+            "memory": {"available_gb": 8, "percent_used": 50},
+            "cpu": {"cpu_percent": 20},
             "startup": {"items": []},
         }
         scanner_instance.scan.return_value = (mock_metrics, [])
@@ -120,9 +120,9 @@ class TestGetSystemStatus:
 
     def test_critical_disk_flagged(self, tool_executor):
         tool_executor._mock_metrics.to_dict.return_value = {
-            "disk": {"total_gb": 500, "used_gb": 470, "free_gb": 30, "usage_percent": 95, "breakdown": {}},
-            "memory": {"available_gb": 8, "usage_percent": 50},
-            "cpu": {"usage_percent": 20},
+            "disk": {"total_gb": 500, "used_gb": 470, "free_gb": 30, "percent_used": 95, "cache_breakdown": {}},
+            "memory": {"available_gb": 8, "percent_used": 50},
+            "cpu": {"cpu_percent": 20},
             "startup": {"items": []},
         }
         tool_executor._scanner_mock.scan.return_value = (tool_executor._mock_metrics, [])

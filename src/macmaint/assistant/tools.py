@@ -548,10 +548,10 @@ class ToolExecutor:
                 'total_gb': disk_data.get('total_gb', 0),
                 'used_gb': disk_data.get('used_gb', 0),
                 'free_gb': disk_data.get('free_gb', 0),
-                'usage_percent': disk_data.get('usage_percent', 0),
-                'breakdown': disk_data.get('breakdown', {})
+                'usage_percent': disk_data.get('percent_used', 0),
+                'breakdown': disk_data.get('cache_breakdown', {})
             },
-            'summary': f"Disk usage: {disk_data.get('used_gb', 0):.1f}GB / {disk_data.get('total_gb', 0):.1f}GB ({disk_data.get('usage_percent', 0):.1f}%)"
+            'summary': f"Disk usage: {disk_data.get('used_gb', 0):.1f}GB / {disk_data.get('total_gb', 0):.1f}GB ({disk_data.get('percent_used', 0):.1f}%)"
         }
     
     def _get_system_status(self) -> Dict:
@@ -576,20 +576,24 @@ class ToolExecutor:
         
         critical_issues = [i for i in issues if 'critical' in str(i.severity).lower()]
         
+        disk_pct = disk_data.get('percent_used', 0)
+        mem_pct = memory_data.get('percent_used', 0)
+        cpu_pct = cpu_data.get('cpu_percent', 0)
+
         status = {
             'disk': {
                 'free_gb': disk_data.get('free_gb', 0),
-                'usage_percent': disk_data.get('usage_percent', 0),
-                'status': 'critical' if disk_data.get('usage_percent', 0) > 90 else 'warning' if disk_data.get('usage_percent', 0) > 80 else 'ok'
+                'usage_percent': disk_pct,
+                'status': 'critical' if disk_pct > 90 else 'warning' if disk_pct > 80 else 'ok'
             },
             'memory': {
                 'available_gb': memory_data.get('available_gb', 0),
-                'usage_percent': memory_data.get('usage_percent', 0),
-                'status': 'critical' if memory_data.get('usage_percent', 0) > 90 else 'warning' if memory_data.get('usage_percent', 0) > 80 else 'ok'
+                'usage_percent': mem_pct,
+                'status': 'critical' if mem_pct > 90 else 'warning' if mem_pct > 80 else 'ok'
             },
             'cpu': {
-                'usage_percent': cpu_data.get('usage_percent', 0),
-                'status': 'critical' if cpu_data.get('usage_percent', 0) > 90 else 'warning' if cpu_data.get('usage_percent', 0) > 80 else 'ok'
+                'usage_percent': cpu_pct,
+                'status': 'critical' if cpu_pct > 90 else 'warning' if cpu_pct > 80 else 'ok'
             },
             'critical_issues': len(critical_issues),
             'overall_status': 'critical' if critical_issues else 'ok'
@@ -623,8 +627,8 @@ class ToolExecutor:
         
         # Calculate trends
         trends = {
-            'disk_usage': [s['metrics'].get('disk', {}).get('usage_percent', 0) for s in snapshots],
-            'memory_usage': [s['metrics'].get('memory', {}).get('usage_percent', 0) for s in snapshots],
+            'disk_usage': [s['metrics'].get('disk', {}).get('percent_used', 0) for s in snapshots],
+            'memory_usage': [s['metrics'].get('memory', {}).get('percent_used', 0) for s in snapshots],
             'issue_count': [len(s.get('issues', [])) for s in snapshots]
         }
         
