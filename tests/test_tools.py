@@ -1,6 +1,9 @@
 """Unit tests for ToolExecutor."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
+import tempfile
+import os
 
 import pytest
 
@@ -50,7 +53,7 @@ def tool_executor(mock_config, mock_profile_manager):
 
 class TestToolSchemas:
     def test_tool_count(self):
-        assert len(TOOLS) == 10
+        assert len(TOOLS) == 11
 
     def test_all_have_function_name(self):
         names = {t["function"]["name"] for t in TOOLS}
@@ -58,7 +61,7 @@ class TestToolSchemas:
             "scan_system", "fix_issues", "explain_issue", "clean_caches",
             "manage_startup_items", "get_disk_analysis",
             "get_system_status", "show_trends", "create_maintenance_plan",
-            "delegate_to_sub_agent",
+            "delegate_to_sub_agent", "delete_files",
         }
         assert names == expected
 
@@ -206,3 +209,60 @@ class TestCreateMaintenancePlan:
         assert "daily" in data
         assert "weekly" in data
         assert "monthly" in data
+
+
+class TestDeleteFiles:
+    def test_deletes_file_in_home(self, tool_executor):
+        with tempfile.NamedTemporaryFile(dir=Path.home(), delete=False, suffix=".dmg") as f:
+            f.write(b"x" * 1024 * 1024)  # 1 MB so space_freed_mb rounds > 0
+            tmp_path = f.name
+        try:
+            result = tool_executor.execute("delete_files", {"paths": [tmp_path]})
+            assert result["success"] is True
+            assert result["data"]["files_deleted"] == 1
+            assert result["data"]["space_freed_mb"] > 0
+            assert not Path(tmp_path).exists()
+        finally:
+            # Cleanup if test failed mid-way
+            if Path(tmp_path).exists():
+                os.unlink(tmp_path)
+
+    def test_file_not_found_graceful(self, tool_executor):
+        path = str(Path.home() / "nonexistent_macmaint_test_file_xyz.dmg")
+        result = tool_executor.execute("delete_files", {"paths": [path]})
+        assert result["success"] is True
+        assert result["data"]["files_deleted"] == 0
+        assert len(result["data"]["failed"]) == 1
+        assert "not found" in result["data"]["failed"][0]["error"].lower()
+
+    def test_refuses_path_outside_home(self, tool_executor):
+        result = tool_executor.execute("delete_files", {"paths": ["/etc/hosts"]})
+        assert result["success"] is True
+        assert result["data"]["files_deleted"] == 0
+        failed = result["data"]["failed"]
+        assert len(failed) == 1
+        assert "outside" in failed[0]["error"].lower()
+
+    def test_refuses_directory(self, tool_executor):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as tmpdir:
+            result = tool_executor.execute("delete_files", {"paths": [tmpdir]})
+            assert result["success"] is True
+            assert result["data"]["files_deleted"] == 0
+            failed = result["data"]["failed"]
+            assert len(failed) == 1
+            assert "directory" in failed[0]["error"].lower()
+
+    def test_partial_success(self, tool_executor):
+        """One valid file + one nonexistent → 1 deleted, 1 failed."""
+        with tempfile.NamedTemporaryFile(dir=Path.home(), delete=False, suffix=".tmp") as f:
+            f.write(b"data")
+            tmp_path = f.name
+        try:
+            missing = str(Path.home() / "does_not_exist_macmaint.tmp")
+            result = tool_executor.execute("delete_files", {"paths": [tmp_path, missing]})
+            assert result["success"] is True
+            assert result["data"]["files_deleted"] == 1
+            assert len(result["data"]["failed"]) == 1
+        finally:
+            if Path(tmp_path).exists():
+                os.unlink(tmp_path)

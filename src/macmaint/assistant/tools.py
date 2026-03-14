@@ -179,6 +179,29 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "delete_files",
+            "description": (
+                "Permanently delete specific files by their absolute path. "
+                "Only use paths that were returned by scan_system or get_disk_analysis (large_files list). "
+                "Always confirm with the user before calling this tool. "
+                "Will refuse to delete directories or paths outside the user's home directory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Absolute file paths to delete. Must be paths previously returned by scan results."
+                    }
+                },
+                "required": ["paths"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delegate_to_sub_agent",
             "description": (
                 "Delegate a complex or specialised task to one of three focused sub-agents "
@@ -886,4 +909,78 @@ class ToolExecutor:
         return {
             'data': plan,
             'summary': f"Created maintenance plan with {len(plan['daily'])} daily, {len(plan['weekly'])} weekly, and {len(plan['monthly'])} monthly tasks"
+        }
+
+    def _delete_files(self, paths: List[str]) -> Dict:
+        """Permanently delete specific files by absolute path.
+
+        Safety rules:
+        - Only files (not directories) may be deleted.
+        - All paths must be under the user's home directory.
+
+        Args:
+            paths: Absolute paths to delete.
+
+        Returns:
+            Dict with 'data' and 'summary' keys.
+        """
+        import os
+
+        home = Path.home()
+        results = []
+        total_freed_bytes = 0
+
+        for path_str in paths:
+            path = Path(path_str)
+            entry: Dict[str, Any] = {'path': path_str, 'success': False, 'bytes_freed': 0, 'error': None}
+
+            # Safety: must be inside home directory
+            try:
+                path.resolve().relative_to(home)
+            except ValueError:
+                entry['error'] = "Refused: path is outside the user home directory"
+                results.append(entry)
+                continue
+
+            # Safety: must exist
+            if not path.exists():
+                entry['error'] = "File not found"
+                results.append(entry)
+                continue
+
+            # Safety: must be a file, not a directory
+            if not path.is_file():
+                entry['error'] = "Refused: path is a directory, not a file"
+                results.append(entry)
+                continue
+
+            try:
+                size = path.stat().st_size
+                path.unlink()
+                entry['success'] = True
+                entry['bytes_freed'] = size
+                total_freed_bytes += size
+            except (OSError, PermissionError) as exc:
+                entry['error'] = str(exc)
+
+            results.append(entry)
+
+        succeeded = [r for r in results if r['success']]
+        failed = [r for r in results if not r['success']]
+        freed_mb = round(total_freed_bytes / (1024 * 1024), 2)
+
+        if succeeded:
+            self.profile_manager.track_cleanup()
+
+        return {
+            'data': {
+                'deleted': succeeded,
+                'failed': failed,
+                'files_deleted': len(succeeded),
+                'space_freed_mb': freed_mb,
+            },
+            'summary': (
+                f"Deleted {len(succeeded)} file(s), freed {freed_mb} MB"
+                + (f"; {len(failed)} failed" if failed else "")
+            )
         }
