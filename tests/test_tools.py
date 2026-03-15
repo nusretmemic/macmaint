@@ -204,6 +204,80 @@ class TestManageStartupItems:
         assert "data" in result
         assert result["data"]["action"] == "disable"
 
+    def test_system_item_permission_denied_without_sudo_hints_trust_mode(self, tool_executor):
+        """Permission error on a system item without use_sudo → error mentions trust mode."""
+        tool_executor.execute("scan_system", {})
+
+        system_item = {
+            "id": "com.example.daemon",
+            "name": "Example Daemon",
+            "path": "/Library/LaunchDaemons/com.example.daemon.plist",
+            "type": "launch_daemon",
+            "scope": "system",
+            "enabled": True,
+        }
+        # Inject item into last scan so lookup succeeds
+        tool_executor._last_scan_results[0].startup = MagicMock(
+            model_dump=lambda: {
+                "login_items": [],
+                "launch_agents": [],
+                "launch_daemons": [system_item],
+            }
+        )
+
+        perm_proc = MagicMock(returncode=1, stderr="Operation not permitted", stdout="")
+        with patch("subprocess.run", return_value=perm_proc):
+            result = tool_executor._manage_startup_items(
+                action="disable",
+                item_ids=["com.example.daemon"],
+                use_sudo=False,
+            )
+
+        item_result = result["data"]["results"][0]
+        assert item_result["success"] is False
+        assert "trust" in item_result["error"].lower() or "administrator" in item_result["error"].lower()
+
+    def test_system_item_permission_denied_with_sudo_calls_osascript(self, tool_executor):
+        """use_sudo=True retries via osascript when permission is denied."""
+        tool_executor.execute("scan_system", {})
+
+        system_item = {
+            "id": "com.example.daemon",
+            "name": "Example Daemon",
+            "path": "/Library/LaunchDaemons/com.example.daemon.plist",
+            "type": "launch_daemon",
+            "scope": "system",
+            "enabled": True,
+        }
+        tool_executor._last_scan_results[0].startup = MagicMock(
+            model_dump=lambda: {
+                "login_items": [],
+                "launch_agents": [],
+                "launch_daemons": [system_item],
+            }
+        )
+
+        perm_proc = MagicMock(returncode=1, stderr="Operation not permitted", stdout="")
+        sudo_proc = MagicMock(returncode=0, stderr="", stdout="")
+
+        call_results = [perm_proc, sudo_proc, sudo_proc]  # bootout fails, osascript succeeds x2
+        with patch("subprocess.run", side_effect=call_results) as mock_run, \
+             patch.object(tool_executor, "_run_with_sudo", return_value=sudo_proc) as mock_sudo:
+            result = tool_executor._manage_startup_items(
+                action="disable",
+                item_ids=["com.example.daemon"],
+                use_sudo=True,
+            )
+
+        # osascript should have been called — first call must be the bootout
+        assert mock_sudo.call_count >= 1
+        first_sudo_call_args = mock_sudo.call_args_list[0][0][0]
+        assert "bootout" in first_sudo_call_args
+        assert "/Library/LaunchDaemons/com.example.daemon.plist" in first_sudo_call_args
+
+        item_result = result["data"]["results"][0]
+        assert item_result["success"] is True
+
 
 class TestCreateMaintenancePlan:
     def test_returns_plan_structure(self, tool_executor):

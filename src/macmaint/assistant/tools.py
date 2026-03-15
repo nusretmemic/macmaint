@@ -696,7 +696,23 @@ class ToolExecutor:
             'summary': "Memory optimization is not available yet. Use get_system_status to see memory usage and top processes."
         }
     
-    def _manage_startup_items(self, action: str, item_ids: List[str] = None) -> Dict:
+    @staticmethod
+    def _run_with_sudo(shell_cmd: str) -> "subprocess.CompletedProcess":
+        """Run a shell command with administrator privileges via osascript.
+
+        Triggers macOS's native password dialog.  Returns a CompletedProcess-like
+        object with ``returncode``, ``stdout``, and ``stderr`` attributes.
+        """
+        import subprocess
+
+        escaped = shell_cmd.replace('"', '\\"')
+        osascript_cmd = [
+            'osascript', '-e',
+            f'do shell script "{escaped}" with administrator privileges',
+        ]
+        return subprocess.run(osascript_cmd, capture_output=True, text=True, timeout=30)
+
+    def _manage_startup_items(self, action: str, item_ids: List[str] = None, use_sudo: bool = False) -> Dict:
         """Manage startup items.
         
         Args:
@@ -820,20 +836,47 @@ class ToolExecutor:
                     # launchctl exits non-zero if the service wasn't loaded — that's fine,
                     # it just means it was already stopped; persist the disabled state anyway.
                     if not is_user:
-                        subprocess.run(
-                            ['launchctl', 'disable', f'system/{label}'],
-                            capture_output=True, text=True, timeout=10
+                        perm_error = (
+                            proc.returncode != 0
+                            and ('Operation not permitted' in proc.stderr or 'Permission denied' in proc.stderr)
                         )
-
-                    if proc.returncode != 0 and 'No such process' not in proc.stderr and 'Could not find' not in proc.stderr:
-                        # Distinguish permission errors (system items without sudo)
-                        if 'Operation not permitted' in proc.stderr or 'Permission denied' in proc.stderr:
+                        if perm_error and use_sudo:
+                            # Retry bootout via osascript sudo prompt
+                            sudo_proc = self._run_with_sudo(
+                                f"launchctl bootout system {plist_path}"
+                            )
+                            if sudo_proc.returncode == 0:
+                                proc = sudo_proc  # treat as success
+                            else:
+                                entry['error'] = (
+                                    f"Permission denied even with administrator privileges: "
+                                    f"{sudo_proc.stderr.strip() or sudo_proc.stdout.strip()}"
+                                )
+                                results.append(entry)
+                                continue
+                        elif perm_error:
                             entry['error'] = (
                                 f"Permission denied — system-level items require administrator privileges. "
-                                f"Run: sudo launchctl bootout system {plist_path}"
+                                f"Enable trust mode ('trust' command) or run manually: "
+                                f"sudo launchctl bootout system {plist_path}"
                             )
                             results.append(entry)
                             continue
+
+                        # Persist disabled state (suppress errors — best-effort)
+                        disable_cmd = f"launchctl disable system/{label}"
+                        if use_sudo:
+                            self._run_with_sudo(disable_cmd)
+                        else:
+                            subprocess.run(
+                                ['launchctl', 'disable', f'system/{label}'],
+                                capture_output=True, text=True, timeout=10
+                            )
+
+                    if proc.returncode != 0 and 'No such process' not in proc.stderr and 'Could not find' not in proc.stderr:
+                        entry['error'] = proc.stderr.strip() or f"launchctl returned exit code {proc.returncode}"
+                        results.append(entry)
+                        continue
 
                     entry['success'] = True
                     modified += 1
@@ -842,22 +885,41 @@ class ToolExecutor:
                     if is_user:
                         cmd = ['launchctl', 'bootstrap', f'gui/{uid}', plist_path]
                     else:
-                        subprocess.run(
-                            ['launchctl', 'enable', f'system/{label}'],
-                            capture_output=True, text=True, timeout=10
-                        )
+                        enable_cmd = f"launchctl enable system/{label}"
+                        if use_sudo:
+                            self._run_with_sudo(enable_cmd)
+                        else:
+                            subprocess.run(
+                                ['launchctl', 'enable', f'system/{label}'],
+                                capture_output=True, text=True, timeout=10
+                            )
                         cmd = ['launchctl', 'bootstrap', 'system', plist_path]
 
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
                     if proc.returncode != 0:
                         if 'Operation not permitted' in proc.stderr or 'Permission denied' in proc.stderr:
-                            entry['error'] = (
-                                f"Permission denied — system-level items require administrator privileges. "
-                                f"Run: sudo launchctl bootstrap system {plist_path}"
-                            )
-                            results.append(entry)
-                            continue
+                            if use_sudo and not is_user:
+                                sudo_proc = self._run_with_sudo(
+                                    f"launchctl bootstrap system {plist_path}"
+                                )
+                                if sudo_proc.returncode == 0:
+                                    proc = sudo_proc
+                                else:
+                                    entry['error'] = (
+                                        f"Permission denied even with administrator privileges: "
+                                        f"{sudo_proc.stderr.strip() or sudo_proc.stdout.strip()}"
+                                    )
+                                    results.append(entry)
+                                    continue
+                            else:
+                                entry['error'] = (
+                                    f"Permission denied — system-level items require administrator privileges. "
+                                    f"Enable trust mode ('trust' command) or run manually: "
+                                    f"sudo launchctl bootstrap system {plist_path}"
+                                )
+                                results.append(entry)
+                                continue
                         # "Service already loaded" is acceptable for enable
                         if 'service already loaded' not in proc.stderr.lower() and 'already bootstrapped' not in proc.stderr.lower():
                             entry['error'] = proc.stderr.strip() or f"launchctl returned exit code {proc.returncode}"

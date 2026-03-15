@@ -277,6 +277,8 @@ class Orchestrator:
                     else:
                         if fn_name == "fix_issues" and session.trust_mode:
                             fn_args["auto_approve"] = True
+                        if fn_name == "manage_startup_items" and session.trust_mode:
+                            fn_args["use_sudo"] = True
                         result = self.tool_executor.execute(fn_name, fn_args)
                 except Exception as exc:
                     result = {
