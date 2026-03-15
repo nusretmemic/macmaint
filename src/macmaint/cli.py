@@ -806,8 +806,8 @@ def update(check_only, force):
 
     console.print()
 
-    with create_progress("Checking for updates…") as progress:
-        task = progress.add_task("fetch", total=None)
+    with create_progress() as progress:
+        task = progress.add_task("Checking for updates…", total=None)
         info = check_for_updates(force=force)
         progress.update(task, completed=True)
 
@@ -851,8 +851,8 @@ def update(check_only, force):
         return
 
     console.print()
-    with create_progress("Running brew upgrade macmaint…") as progress:
-        task = progress.add_task("brew", total=None)
+    with create_progress() as progress:
+        task = progress.add_task("Running brew upgrade macmaint…", total=None)
         result = run_brew_upgrade()
         progress.update(task, completed=True)
 

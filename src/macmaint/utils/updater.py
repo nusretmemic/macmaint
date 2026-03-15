@@ -57,7 +57,7 @@ def _save_cache(latest_version: str, release_url: str) -> None:
         pass
 
 
-def _fetch_latest_release(timeout: int = 5) -> Optional[dict]:
+def _fetch_latest_release(timeout: int = 8) -> Optional[dict]:
     """Hit the GitHub API and return {'latest_version': str, 'release_url': str} or None."""
     try:
         req = urllib.request.Request(
@@ -70,6 +70,11 @@ def _fetch_latest_release(timeout: int = 5) -> Optional[dict]:
         url = payload.get("html_url", "")
         if tag:
             return {"latest_version": tag, "release_url": url}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # No GitHub Release published yet for this repo
+            return None
+        raise
     except Exception:
         pass
     return None
