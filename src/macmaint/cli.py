@@ -788,6 +788,85 @@ def chat(new):
             traceback.print_exc()
 
 
+# ── Update command ────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option('--check-only', is_flag=True, help='Only check for updates, do not install')
+@click.option('--force', is_flag=True, help='Bypass 24-hour cache and re-fetch from GitHub')
+def update(check_only, force):
+    """Check for a newer version of MacMaint and optionally install it.
+
+    MacMaint is distributed via Homebrew, so updates are applied with
+    'brew upgrade macmaint'.  Results are cached for 24 hours; use --force
+    to bypass the cache.
+    """
+    from macmaint.utils.updater import check_for_updates, run_brew_upgrade
+    from rich.panel import Panel
+    from rich import box
+
+    console.print()
+
+    with create_progress("Checking for updates…") as progress:
+        task = progress.add_task("fetch", total=None)
+        info = check_for_updates(force=force)
+        progress.update(task, completed=True)
+
+    if info.get("error"):
+        print_error(f"Update check failed: {info['error']}")
+        return
+
+    current = info["current_version"]
+    latest  = info["latest_version"]
+    cached  = " [dim](cached)[/dim]" if info["from_cache"] else ""
+
+    if not info["update_available"]:
+        console.print(Panel(
+            f"  [bold bright_green]You're up to date![/bold bright_green]{cached}\n\n"
+            f"  Current version:  [bold]{current}[/bold]\n"
+            f"  Latest release:   [bold]{latest}[/bold]",
+            border_style="green",
+            box=box.ROUNDED,
+            padding=(1, 3),
+        ))
+        return
+
+    console.print(Panel(
+        f"  [bold yellow]Update available![/bold yellow]{cached}\n\n"
+        f"  Installed:  [bold]{current}[/bold]\n"
+        f"  Latest:     [bold bright_cyan]{latest}[/bold bright_cyan]\n\n"
+        f"  [dim]{info['release_url']}[/dim]",
+        border_style="yellow",
+        box=box.ROUNDED,
+        padding=(1, 3),
+    ))
+
+    if check_only:
+        console.print()
+        print_info("Run [bold]macmaint update[/bold] (without --check-only) to install.")
+        return
+
+    console.print()
+    if not click.confirm("Install update now via 'brew upgrade macmaint'?", default=True):
+        print_info("Skipped. Run [bold]macmaint update[/bold] when you're ready.")
+        return
+
+    console.print()
+    with create_progress("Running brew upgrade macmaint…") as progress:
+        task = progress.add_task("brew", total=None)
+        result = run_brew_upgrade()
+        progress.update(task, completed=True)
+
+    console.print()
+    if result["success"]:
+        print_success("MacMaint updated successfully!")
+        if result["output"]:
+            console.print(f"[dim]{result['output']}[/dim]")
+    else:
+        print_error(f"Update failed: {result['error']}")
+        if result["output"]:
+            console.print(f"[dim]{result['output']}[/dim]")
+
+
 # ── Session management commands ───────────────────────────────────────────────
 
 @cli.group()

@@ -125,6 +125,7 @@ class AssistantREPL:
         try:
             self.session = self.session_manager.get_or_create_latest(force_new)
             self._show_welcome(is_resumed=len(self.session.messages) > 0)
+            self._check_for_update_async()
 
             while True:
                 try:
@@ -191,6 +192,30 @@ class AssistantREPL:
             box=box.ROUNDED,
         ))
         self.console.print()
+
+    def _check_for_update_async(self) -> None:
+        """Spawn a background thread to check for updates and print a nudge if available.
+
+        The thread runs after the welcome screen is shown so it never blocks
+        startup.  The nudge appears as a single dim line before the first prompt.
+        The check uses the 24-hour cache, so network is not hit on every launch.
+        """
+        def _check():
+            try:
+                from macmaint.utils.updater import check_for_updates
+                info = check_for_updates()
+                if info.get("update_available"):
+                    latest = info["latest_version"]
+                    self.console.print(
+                        f"  [yellow]⬆  MacMaint {latest} is available.[/yellow]"
+                        f"  [dim]Run [bold]macmaint update[/bold] to install.[/dim]\n"
+                    )
+            except Exception:
+                pass  # Never crash the REPL over a failed update check
+
+        t = threading.Thread(target=_check, daemon=True)
+        t.start()
+        t.join(timeout=3)   # Wait up to 3 s; if cache miss and network slow, skip silently
 
     def _handle_exit(self) -> None:
         self.session_manager.clear_trust_mode(self.session)

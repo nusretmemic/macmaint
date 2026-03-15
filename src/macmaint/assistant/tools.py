@@ -242,6 +242,28 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "check_for_updates",
+            "description": (
+                "Check whether a newer version of MacMaint is available on GitHub. "
+                "Returns the installed version, latest release version, and whether an "
+                "update is available. Results are cached for 24 hours. "
+                "Use when the user asks about updates, version, or 'is macmaint up to date'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "force": {
+                        "type": "boolean",
+                        "description": "If true, bypass the 24-hour cache and fetch fresh from GitHub. Default: false."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delegate_to_sub_agent",
             "description": (
                 "Delegate a complex or specialised task to one of three focused sub-agents "
@@ -1426,6 +1448,45 @@ class ToolExecutor:
                 "scan_paths": metrics.get("scan_paths", []),
                 "dry_run": dry_run,
                 "groups": group_summaries,
+            },
+            "summary": summary,
+        }
+
+    def _check_for_updates(self, force: bool = False) -> Dict:
+        """Check GitHub for a newer MacMaint release.
+
+        Args:
+            force: Bypass the 24-hour cache when True.
+
+        Returns:
+            Dict with 'data' and 'summary' keys.
+        """
+        from macmaint.utils.updater import check_for_updates
+
+        info = check_for_updates(force=force)
+
+        if info.get("error"):
+            raise RuntimeError(info["error"])
+
+        current = info["current_version"]
+        latest  = info["latest_version"]
+
+        if info["update_available"]:
+            summary = (
+                f"MacMaint {latest} is available (you have {current}). "
+                f"Run 'macmaint update' in the terminal to upgrade."
+            )
+        else:
+            summary = f"MacMaint is up to date (version {current})."
+
+        return {
+            "success": True,
+            "data": {
+                "current_version":  current,
+                "latest_version":   latest,
+                "update_available": info["update_available"],
+                "release_url":      info["release_url"],
+                "from_cache":       info["from_cache"],
             },
             "summary": summary,
         }

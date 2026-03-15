@@ -104,6 +104,11 @@ You have access to powerful tools for Mac maintenance:
 - `create_maintenance_plan`: Generate personalized maintenance schedule
   - Use when user asks "what should I do?" or wants a routine
 
+- `check_for_updates`: Check whether a newer version of MacMaint is available
+  - Use when user asks "is macmaint up to date?", "what version am I on?", "any updates?"
+  - Results are cached for 24 hours; pass force=true if user explicitly wants a fresh check
+  - If an update is available, tell the user to run `macmaint update` in the terminal
+
 **Sub-Agent Delegation:**
 - `delegate_to_sub_agent`: Hand off a complex task to a specialist sub-agent
   - `scan_agent`     – deep diagnostics, structured issue report with health score

@@ -53,7 +53,7 @@ def tool_executor(mock_config, mock_profile_manager):
 
 class TestToolSchemas:
     def test_tool_count(self):
-        assert len(TOOLS) == 12
+        assert len(TOOLS) == 13
 
     def test_all_have_function_name(self):
         names = {t["function"]["name"] for t in TOOLS}
@@ -62,6 +62,7 @@ class TestToolSchemas:
             "manage_startup_items", "get_disk_analysis",
             "get_system_status", "show_trends", "create_maintenance_plan",
             "delegate_to_sub_agent", "delete_files", "find_duplicates",
+            "check_for_updates",
         }
         assert names == expected
 
@@ -466,3 +467,74 @@ class TestFindDuplicates:
             passed_paths = call_kwargs.get("paths")
             assert passed_paths is not None
             assert str(Path.home()) in passed_paths
+
+
+# ---------------------------------------------------------------------------
+# check_for_updates
+# ---------------------------------------------------------------------------
+
+class TestCheckForUpdates:
+    def test_up_to_date(self, tool_executor):
+        """Returns success with update_available=False when already on latest."""
+        fake_info = {
+            "current_version":  "0.9.4",
+            "latest_version":   "0.9.4",
+            "update_available": False,
+            "release_url":      "https://github.com/nusretmemic/macmaint/releases/tag/v0.9.4",
+            "from_cache":       True,
+            "error":            None,
+        }
+        with patch("macmaint.utils.updater.check_for_updates", return_value=fake_info):
+            result = tool_executor.execute("check_for_updates", {})
+
+        assert result["success"] is True
+        assert result["data"]["update_available"] is False
+        assert "up to date" in result["summary"].lower()
+
+    def test_update_available(self, tool_executor):
+        """Returns update_available=True and mentions 'macmaint update' in summary."""
+        fake_info = {
+            "current_version":  "0.9.3",
+            "latest_version":   "0.9.4",
+            "update_available": True,
+            "release_url":      "https://github.com/nusretmemic/macmaint/releases/tag/v0.9.4",
+            "from_cache":       False,
+            "error":            None,
+        }
+        with patch("macmaint.utils.updater.check_for_updates", return_value=fake_info):
+            result = tool_executor.execute("check_for_updates", {})
+
+        assert result["success"] is True
+        assert result["data"]["update_available"] is True
+        assert "0.9.4" in result["summary"]
+        assert "macmaint update" in result["summary"]
+
+    def test_network_error_returns_graceful_failure(self, tool_executor):
+        """A network failure returns success=False with a descriptive error."""
+        fake_info = {
+            "current_version":  "0.9.3",
+            "latest_version":   None,
+            "update_available": False,
+            "release_url":      "",
+            "from_cache":       False,
+            "error":            "Could not reach GitHub — check your internet connection.",
+        }
+        with patch("macmaint.utils.updater.check_for_updates", return_value=fake_info):
+            result = tool_executor.execute("check_for_updates", {})
+
+        assert result["success"] is False
+        assert "GitHub" in result["error"] or "internet" in result["error"]
+
+    def test_force_flag_passed_through(self, tool_executor):
+        """force=True is forwarded to the updater."""
+        fake_info = {
+            "current_version":  "0.9.4",
+            "latest_version":   "0.9.4",
+            "update_available": False,
+            "release_url":      "",
+            "from_cache":       False,
+            "error":            None,
+        }
+        with patch("macmaint.utils.updater.check_for_updates", return_value=fake_info) as mock_check:
+            tool_executor.execute("check_for_updates", {"force": True})
+        mock_check.assert_called_once_with(force=True)
