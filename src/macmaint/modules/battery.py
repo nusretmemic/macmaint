@@ -60,7 +60,7 @@ class BatteryModule(BaseModule):
             # Temperature
             raw_temp = ioreg_info.get('temperature_raw')
             if raw_temp is not None:
-                metrics.temperature = raw_temp / 10.0
+                metrics.temperature = raw_temp / 100.0
 
             # Electrical
             metrics.voltage_mv = ioreg_info.get('voltage_mv')
@@ -493,7 +493,7 @@ class BatteryModule(BaseModule):
                     return m.group(1).lower() in ('yes', 'true')
                 return None
 
-            # Temperature (raw value, divide by 10 for °C)
+            # Temperature (raw value, divide by 100 for °C)
             temp_raw = _parse_int('Temperature')
             if temp_raw is not None:
                 data['temperature_raw'] = temp_raw
