@@ -203,6 +203,45 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "find_duplicates",
+            "description": (
+                "Scan directories for duplicate files using SHA256 hash matching. "
+                "Identifies files with identical content, calculates wasted disk space, "
+                "and recommends which copies to keep (newest) and which to delete. "
+                "Supports dry-run mode and persists scan history. "
+                "Safe: only scans paths inside the user's home directory."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Directories to scan for duplicates. "
+                            "If omitted, scans Downloads, Documents, Desktop, Pictures, Music, Movies."
+                        )
+                    },
+                    "min_size_mb": {
+                        "type": "number",
+                        "description": "Minimum file size in MB to consider. Default: 1. Smaller = more thorough but slower."
+                    },
+                    "deep_scan": {
+                        "type": "boolean",
+                        "description": "If true, scan the entire home directory (slow). Default: false."
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If true, return results without recording to history. Default: false."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delegate_to_sub_agent",
             "description": (
                 "Delegate a complex or specialised task to one of three focused sub-agents "
@@ -263,6 +302,7 @@ class ToolExecutor:
         self._last_scan_results: Optional[Tuple[SystemMetrics, List[Issue]]] = None
         self._last_scan_time: Optional[datetime] = None
         self._scan_cache_path = Path.home() / ".macmaint" / "last_scan_cache.json"
+        self._last_duplicate_scan: Optional[Dict] = None
 
         # H8: Restore last scan from disk so results survive across `macmaint chat` restarts
         self._load_scan_cache()
@@ -1246,4 +1286,84 @@ class ToolExecutor:
                 f"Deleted {len(succeeded)} file(s), freed {freed_mb} MB"
                 + (f"; {len(failed)} failed" if failed else "")
             )
+        }
+
+    def _find_duplicates(
+        self,
+        paths: Optional[List[str]] = None,
+        min_size_mb: float = 1.0,
+        deep_scan: bool = False,
+        dry_run: bool = False,
+    ) -> Dict:
+        """Scan for duplicate files using SHA256 hash + size matching.
+
+        Args:
+            paths:       Directories to scan.  None = common user folders.
+            min_size_mb: Minimum file size in MB to consider (default 1).
+            deep_scan:   If True, scan entire home directory.
+            dry_run:     If True, return results without recording history.
+
+        Returns:
+            Dict with 'data' and 'summary' keys.
+        """
+        from macmaint.modules.duplicates import DuplicateScanner
+
+        dup_config = self.config.get_module_config("duplicates") if hasattr(self.config, 'get_module_config') else {}
+        if not isinstance(dup_config, dict):
+            dup_config = {}
+
+        # Override min_size_mb from caller if provided
+        dup_config = dict(dup_config)
+        dup_config["min_size_mb"] = min_size_mb
+
+        scanner = DuplicateScanner(dup_config)
+
+        scan_paths = paths
+        if deep_scan and not paths:
+            scan_paths = [str(Path.home())]
+
+        metrics, issues = scanner.scan(paths=scan_paths, dry_run=dry_run)
+
+        # Cache for potential follow-up delete calls
+        self._last_duplicate_scan = {"metrics": metrics, "issues": [i.model_dump() for i in issues]}
+
+        groups = metrics.get("duplicate_groups", [])
+        total_duplicates = metrics.get("total_duplicates", 0)
+        wasted_mb = metrics.get("total_wasted_space_mb", 0.0)
+        files_scanned = metrics.get("files_scanned", 0)
+        group_count = metrics.get("duplicate_groups_count", 0)
+
+        # Build concise per-group summary for the AI
+        group_summaries = []
+        for g in groups[:20]:  # cap at 20 groups to keep response size reasonable
+            kept = next((f for f in g["files"] if f.get("keep_recommended")), g["files"][0])
+            group_summaries.append({
+                "name": Path(kept["path"]).name,
+                "copies": g["count"],
+                "size_mb": g["size_mb"],
+                "wasted_mb": g["wasted_mb"],
+                "keep": kept["path"],
+                "delete": [f["path"] for f in g["files"] if not f.get("keep_recommended")],
+            })
+
+        if total_duplicates == 0:
+            summary = f"No duplicates found. Scanned {files_scanned} file(s)."
+        else:
+            summary = (
+                f"Found {group_count} duplicate group(s) with {total_duplicates} extra "
+                f"cop{'y' if total_duplicates == 1 else 'ies'} wasting {wasted_mb:.1f} MB "
+                f"(scanned {files_scanned} files)."
+            )
+
+        return {
+            "data": {
+                "duplicate_groups_count": group_count,
+                "total_duplicates": total_duplicates,
+                "total_wasted_space_mb": wasted_mb,
+                "files_scanned": files_scanned,
+                "scan_paths": metrics.get("scan_paths", []),
+                "dry_run": dry_run,
+                "groups": group_summaries,
+            },
+            "summary": summary,
         }

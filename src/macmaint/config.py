@@ -51,6 +51,12 @@ class Config:
                 "sample_duration_seconds": 5,
                 "min_process_cpu_percent": 10,
             },
+            "duplicates": {
+                "enabled": True,
+                "min_size_mb": 1,
+                "max_workers": 4,
+                "scan_paths": None,  # None = use defaults (Downloads, Documents, etc.)
+            },
         },
         "safety": {
             "require_confirmation": True,

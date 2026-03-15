@@ -53,7 +53,7 @@ def tool_executor(mock_config, mock_profile_manager):
 
 class TestToolSchemas:
     def test_tool_count(self):
-        assert len(TOOLS) == 11
+        assert len(TOOLS) == 12
 
     def test_all_have_function_name(self):
         names = {t["function"]["name"] for t in TOOLS}
@@ -61,7 +61,7 @@ class TestToolSchemas:
             "scan_system", "fix_issues", "explain_issue", "clean_caches",
             "manage_startup_items", "get_disk_analysis",
             "get_system_status", "show_trends", "create_maintenance_plan",
-            "delegate_to_sub_agent", "delete_files",
+            "delegate_to_sub_agent", "delete_files", "find_duplicates",
         }
         assert names == expected
 
@@ -270,3 +270,125 @@ class TestDeleteFiles:
         finally:
             if Path(tmp_path).exists():
                 os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# TestFindDuplicates
+# ---------------------------------------------------------------------------
+
+class TestFindDuplicates:
+    """Tests for the find_duplicates tool via ToolExecutor."""
+
+    def test_no_duplicates_found(self, tool_executor, tmp_path):
+        """Scanning an empty dir returns success with zero duplicates."""
+        with patch("macmaint.modules.duplicates.DuplicateScanner") as MockDS:
+            instance = MockDS.return_value
+            instance.scan.return_value = (
+                {
+                    "total_duplicates": 0,
+                    "duplicate_groups": [],
+                    "duplicate_groups_count": 0,
+                    "total_wasted_space_mb": 0.0,
+                    "scan_duration_seconds": 0.1,
+                    "files_scanned": 5,
+                    "scan_paths": [str(tmp_path)],
+                    "dry_run": True,
+                },
+                [],
+            )
+            result = tool_executor.execute(
+                "find_duplicates",
+                {"paths": [str(tmp_path)], "dry_run": True},
+            )
+
+        assert result["success"] is True
+        assert result["data"]["total_duplicates"] == 0
+        assert result["data"]["duplicate_groups_count"] == 0
+        assert "No duplicates" in result["summary"]
+
+    def test_finds_duplicate_files(self, tool_executor, tmp_path):
+        """Returns correct counts and group summaries when duplicates exist."""
+        fake_groups = [
+            {
+                "hash": "abcd1234abcd1234",
+                "size_mb": 2.0,
+                "count": 2,
+                "wasted_mb": 2.0,
+                "files": [
+                    {"path": str(tmp_path / "new.bin"), "size_mb": 2.0,
+                     "modified_date": "2026-03-15 10:00", "age_days": 0,
+                     "keep_recommended": True},
+                    {"path": str(tmp_path / "old.bin"), "size_mb": 2.0,
+                     "modified_date": "2026-01-01 10:00", "age_days": 73,
+                     "keep_recommended": False},
+                ],
+            }
+        ]
+        with patch("macmaint.modules.duplicates.DuplicateScanner") as MockDS:
+            instance = MockDS.return_value
+            instance.scan.return_value = (
+                {
+                    "total_duplicates": 1,
+                    "duplicate_groups": fake_groups,
+                    "duplicate_groups_count": 1,
+                    "total_wasted_space_mb": 2.0,
+                    "scan_duration_seconds": 0.5,
+                    "files_scanned": 2,
+                    "scan_paths": [str(tmp_path)],
+                    "dry_run": False,
+                },
+                [],
+            )
+            result = tool_executor.execute("find_duplicates", {"paths": [str(tmp_path)]})
+
+        assert result["success"] is True
+        assert result["data"]["total_duplicates"] == 1
+        assert result["data"]["total_wasted_space_mb"] == 2.0
+        assert len(result["data"]["groups"]) == 1
+        assert result["data"]["groups"][0]["copies"] == 2
+
+    def test_dry_run_flag_passed_through(self, tool_executor, tmp_path):
+        """dry_run=True is forwarded to DuplicateScanner.scan."""
+        with patch("macmaint.modules.duplicates.DuplicateScanner") as MockDS:
+            instance = MockDS.return_value
+            instance.scan.return_value = (
+                {
+                    "total_duplicates": 0,
+                    "duplicate_groups": [],
+                    "duplicate_groups_count": 0,
+                    "total_wasted_space_mb": 0.0,
+                    "scan_duration_seconds": 0.0,
+                    "files_scanned": 0,
+                    "scan_paths": [],
+                    "dry_run": True,
+                },
+                [],
+            )
+            tool_executor.execute("find_duplicates", {"dry_run": True})
+            instance.scan.assert_called_once()
+            _, call_kwargs = instance.scan.call_args
+            assert call_kwargs.get("dry_run") is True
+
+    def test_deep_scan_sets_home_path(self, tool_executor):
+        """deep_scan=True passes the home directory as scan path."""
+        with patch("macmaint.modules.duplicates.DuplicateScanner") as MockDS:
+            instance = MockDS.return_value
+            instance.scan.return_value = (
+                {
+                    "total_duplicates": 0,
+                    "duplicate_groups": [],
+                    "duplicate_groups_count": 0,
+                    "total_wasted_space_mb": 0.0,
+                    "scan_duration_seconds": 0.0,
+                    "files_scanned": 0,
+                    "scan_paths": [],
+                    "dry_run": False,
+                },
+                [],
+            )
+            tool_executor.execute("find_duplicates", {"deep_scan": True})
+            instance.scan.assert_called_once()
+            _, call_kwargs = instance.scan.call_args
+            passed_paths = call_kwargs.get("paths")
+            assert passed_paths is not None
+            assert str(Path.home()) in passed_paths

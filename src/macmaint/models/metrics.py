@@ -136,6 +136,36 @@ class StartupMetrics(BaseModel):
     launch_daemons: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class DuplicateFileEntry(BaseModel):
+    """A single file in a duplicate group."""
+    path: str
+    size_mb: float
+    modified_date: str
+    age_days: int
+    keep_recommended: bool = False
+
+
+class DuplicateGroup(BaseModel):
+    """A group of files with identical content (same SHA256 + size)."""
+    hash: str                          # truncated SHA256 (16 hex chars)
+    size_mb: float
+    count: int
+    wasted_mb: float
+    files: List[DuplicateFileEntry] = Field(default_factory=list)
+
+
+class DuplicateMetrics(BaseModel):
+    """Results of a duplicate file scan."""
+    total_duplicates: int = 0
+    duplicate_groups_count: int = 0
+    duplicate_groups: List[DuplicateGroup] = Field(default_factory=list)
+    total_wasted_space_mb: float = 0.0
+    scan_duration_seconds: float = 0.0
+    files_scanned: int = 0
+    scan_paths: List[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
 class SystemMetrics(BaseModel):
     """Combined system metrics."""
     disk: Optional[DiskMetrics] = None
@@ -144,6 +174,7 @@ class SystemMetrics(BaseModel):
     network: Optional[NetworkMetrics] = None
     battery: Optional[BatteryMetrics] = None
     startup: Optional[StartupMetrics] = None
+    duplicates: Optional[DuplicateMetrics] = None
     boot_time: Optional[str] = None
     uptime_hours: Optional[float] = None
     
